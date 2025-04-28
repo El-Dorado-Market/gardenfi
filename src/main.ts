@@ -1,8 +1,8 @@
 import { createWalletClient, http } from 'viem';
-import { arbitrum, base, berachain, mainnet } from 'viem/chains';
+import type { Chain } from 'viem/chains';
 import {
+  evmToViemChainMap,
   Garden,
-  hyperliquid,
   type OrderActions,
   type SwapParams,
 } from '@gardenfi/core';
@@ -70,24 +70,29 @@ if (!toAsset) {
 // #endregion
 
 const account = mnemonicToAccount(mnemonic);
-const evmWalletClient =
-  isEVM(fromAsset.chain) &&
-  createWalletClient({
-    account,
-    chain:
-      (fromAsset.chain === 'arbitrum' && arbitrum) ||
-      (fromAsset.chain === 'base' && base) ||
-      (fromAsset.chain === 'bera' && berachain) ||
-      (fromAsset.chain === 'hyperliquid' && hyperliquid) ||
-      mainnet,
-    transport: http(evmRpcUrl),
-  });
+
+const viemChain: Chain | undefined =
+  evmToViemChainMap[fromAsset.chain] || evmToViemChainMap[toAsset.chain];
+if (!viemChain) {
+  throw new Error(
+    'Neither from chain "' +
+      fromAsset.chain +
+      '" or to chain "' +
+      toAsset.chain +
+      '" are EVM chains',
+  );
+}
+const evmWalletClient = createWalletClient({
+  account,
+  chain: viemChain,
+  transport: http(evmRpcUrl),
+});
 
 const garden = Garden.fromWallets({
   environment: Environment.MAINNET,
   digestKey: digestKeyResult.val,
   wallets: {
-    ...(evmWalletClient && { evm: evmWalletClient }),
+    evm: evmWalletClient,
   },
 });
 
@@ -152,6 +157,7 @@ quote
       console.dir({ matchedOrder }, { depth: null });
       if (isEVM(fromAsset.chain)) {
         if (!garden.evmHTLC) {
+          // note that EVM HTLC is required to swap
           return new Result(false, null, 'EVM HTLC is not available');
         }
         return garden.evmHTLC.initiate(matchedOrder);
