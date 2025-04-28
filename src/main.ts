@@ -1,10 +1,10 @@
 import { createWalletClient, http } from 'viem';
-import { base } from 'viem/chains';
+import { arbitrum, base, berachain, mainnet } from 'viem/chains';
 import {
   Garden,
+  hyperliquid,
   type OrderActions,
   type SwapParams,
-  // Quote,
 } from '@gardenfi/core';
 import { Environment, DigestKey, Result } from '@gardenfi/utils';
 import { mnemonicToAccount } from 'viem/accounts';
@@ -15,6 +15,7 @@ import {
   SupportedAssets,
 } from '@gardenfi/orderbook';
 
+// #region env
 const amountUnit = Number.parseFloat(process.env.AMOUNT_UNIT ?? '');
 if (Number.isNaN(amountUnit)) {
   throw new Error('AMOUNT_UNIT is not set');
@@ -40,30 +41,56 @@ if (!evmRpcUrl) {
   throw new Error('EVM_RPC_URL is not set');
 }
 
+type SupportedMainnetAssets = typeof SupportedAssets.mainnet;
+const mainnetAssets: {
+  [K in string]?: SupportedMainnetAssets[keyof SupportedMainnetAssets];
+} = SupportedAssets.mainnet;
+const fromAssetKey = process.env.FROM_ASSET_KEY;
+if (!fromAssetKey) {
+  throw new Error('FROM_ASSET_KEY is not set');
+}
+const fromAsset = mainnetAssets[fromAssetKey];
+if (!fromAsset) {
+  throw new Error(`Invalid FROM_ASSET_KEY: ${fromAssetKey}`);
+}
+
 const mnemonic = process.env.MNEMONIC;
 if (!mnemonic) {
   throw new Error('MNEMONIC is not set');
 }
 
+const toAssetKey = process.env.TO_ASSET_KEY;
+if (!toAssetKey) {
+  throw new Error('TO_ASSET_KEY is not set');
+}
+const toAsset = mainnetAssets[toAssetKey];
+if (!toAsset) {
+  throw new Error(`Invalid TO_ASSET_KEY: ${toAssetKey}`);
+}
+// #endregion
+
 const account = mnemonicToAccount(mnemonic);
-const evmWalletClient = createWalletClient({
-  account,
-  // chain: arbitrum,
-  chain: base,
-  transport: http(evmRpcUrl),
-});
+const evmWalletClient =
+  isEVM(fromAsset.chain) &&
+  createWalletClient({
+    account,
+    chain:
+      (fromAsset.chain === 'arbitrum' && arbitrum) ||
+      (fromAsset.chain === 'base' && base) ||
+      (fromAsset.chain === 'bera' && berachain) ||
+      (fromAsset.chain === 'hyperliquid' && hyperliquid) ||
+      mainnet,
+    transport: http(evmRpcUrl),
+  });
 
 const garden = Garden.fromWallets({
   environment: Environment.MAINNET,
   digestKey: digestKeyResult.val,
   wallets: {
-    evm: evmWalletClient,
+    ...(evmWalletClient && { evm: evmWalletClient }),
   },
 });
 
-// const fromAsset = SupportedAssets.mainnet.arbitrum_WBTC;
-const fromAsset = SupportedAssets.mainnet.base_cbBTC;
-const toAsset = SupportedAssets.mainnet.bitcoin_BTC;
 const sendAmount = amountUnit * 10 ** fromAsset.decimals;
 const constructOrderPair = ({
   fromAsset,
@@ -82,7 +109,6 @@ const constructOrderPair = ({
 const orderPair = constructOrderPair({ fromAsset, toAsset });
 
 const exactOut = false;
-// const quote = new Quote(gardenApiUrl);
 const quote = garden.quote;
 console.log({
   quoteParams: {
