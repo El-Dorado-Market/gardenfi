@@ -26,11 +26,6 @@ if (!btcAddress) {
   throw new Error('BTC_ADDRESS is not set');
 }
 
-const digestKeyResult = DigestKey.generateRandom();
-if (digestKeyResult.error) {
-  throw new Error(`Invalid digest key: ${digestKeyResult.error}`);
-}
-
 const gardenApiUrl = process.env.GARDEN_API_URL;
 if (!gardenApiUrl) {
   throw new Error('GARDEN_API_URL is not set');
@@ -69,153 +64,166 @@ if (!toAsset) {
 }
 // #endregion
 
-const account = mnemonicToAccount(mnemonic);
-
-const viemChain: Chain | undefined =
-  evmToViemChainMap[fromAsset.chain] || evmToViemChainMap[toAsset.chain];
-if (!viemChain) {
-  throw new Error(
-    'Neither from chain "' +
-      fromAsset.chain +
-      '" or to chain "' +
-      toAsset.chain +
-      '" are EVM chains',
-  );
-}
-const evmWalletClient = createWalletClient({
-  account,
-  chain: viemChain,
-  transport: http(evmRpcUrl),
-});
-
-const garden = Garden.fromWallets({
-  environment: Environment.MAINNET,
-  digestKey: digestKeyResult.val,
-  wallets: {
-    evm: evmWalletClient,
-  },
-});
-
-const sendAmount = amountUnit * 10 ** fromAsset.decimals;
-const constructOrderPair = ({
-  fromAsset,
-  toAsset,
-}: { fromAsset: Asset; toAsset: Asset }) => {
+const constructOrderPair = (props: { fromAsset: Asset; toAsset: Asset }) => {
   return (
-    fromAsset.chain +
+    props.fromAsset.chain +
     ':' +
-    fromAsset.atomicSwapAddress +
+    props.fromAsset.atomicSwapAddress +
     '::' +
-    toAsset.chain +
+    props.toAsset.chain +
     ':' +
-    toAsset.atomicSwapAddress
+    props.toAsset.atomicSwapAddress
   );
 };
-const orderPair = constructOrderPair({ fromAsset, toAsset });
 
-const exactOut = false;
-const quote = garden.quote;
-console.log({
-  quoteParams: {
-    exactOut,
-    orderPair,
-    sendAmount,
-  },
-});
-quote
-  .getQuote(orderPair, sendAmount, exactOut)
-  .then<Result<null | MatchedOrder, string>>((result) => {
-    if (result.error) {
-      return new Result(false, null, result.error);
-    }
-    console.dir({ quote: result.val }, { depth: null });
-    const firstQuote = Object.entries(result.val.quotes).at(0);
-    if (!firstQuote) {
-      return new Result(false, null, 'Missing quote');
-    }
-    const [strategyId, quoteAmount] = firstQuote;
-    const swapParams: SwapParams = {
-      fromAsset,
-      toAsset,
-      sendAmount: sendAmount.toString(),
-      receiveAmount: quoteAmount,
-      additionalData: {
-        strategyId,
-        btcAddress,
-      },
-    };
-    return garden.swap(swapParams) as unknown as Promise<
-      Result<MatchedOrder, string>
-    >;
-  })
-  .then<Result<null | string | { depositAddress: string }, string>>(
-    (result) => {
-      if (result.val === null || result.error) {
+export const getQuote = (props: {
+  amountUnit: number;
+  fromAsset: Asset;
+  toAsset: Asset;
+}) => {
+  const account = mnemonicToAccount(mnemonic);
+  const digestKeyResult = DigestKey.generateRandom();
+  if (digestKeyResult.error) {
+    throw new Error(`Invalid digest key: ${digestKeyResult.error}`);
+  }
+  const viemChain: Chain | undefined =
+    evmToViemChainMap[fromAsset.chain] || evmToViemChainMap[toAsset.chain];
+  if (!viemChain) {
+    throw new Error(
+      'Neither from chain "' +
+        fromAsset.chain +
+        '" or to chain "' +
+        toAsset.chain +
+        '" are EVM chains',
+    );
+  }
+  const evmWalletClient = createWalletClient({
+    account,
+    chain: viemChain,
+    transport: http(evmRpcUrl),
+  });
+  const garden = Garden.fromWallets({
+    environment: Environment.MAINNET,
+    digestKey: digestKeyResult.val,
+    wallets: {
+      evm: evmWalletClient,
+    },
+  });
+  const sendAmount = props.amountUnit * 10 ** props.fromAsset.decimals;
+  const orderPair = constructOrderPair({
+    fromAsset: props.fromAsset,
+    toAsset: props.toAsset,
+  });
+  console.dir(
+    {
+      digestKeyResult,
+      quoteProps: props,
+    },
+    { depth: null },
+  );
+  return garden.quote
+    .getQuote(orderPair, sendAmount, false)
+    .then<Result<null | MatchedOrder, string>>((result) => {
+      if (result.error) {
         return new Result(false, null, result.error);
       }
-      const matchedOrder = result.val;
-      console.dir({ matchedOrder }, { depth: null });
-      if (isEVM(fromAsset.chain)) {
-        if (!garden.evmHTLC) {
-          // note that EVM HTLC is required to swap
-          return new Result(false, null, 'EVM HTLC is not available');
-        }
-        return garden.evmHTLC.initiate(matchedOrder);
+      console.dir({ quote: result.val }, { depth: null });
+      const firstQuote = Object.entries(result.val.quotes).at(0);
+      if (!firstQuote) {
+        return new Result(false, null, 'Missing quote');
       }
-      const withDepositAddress = {
-        depositAddress: matchedOrder.source_swap.swap_id,
+      const [strategyId, quoteAmount] = firstQuote;
+      const swapParams: SwapParams = {
+        fromAsset: props.fromAsset,
+        toAsset: props.toAsset,
+        sendAmount: sendAmount.toString(),
+        receiveAmount: quoteAmount,
+        additionalData: {
+          strategyId,
+          btcAddress,
+        },
       };
-      return new Result(true, withDepositAddress, '');
-    },
-  )
-  .then<
-    Result<
-      | null
-      | { orderAction: OrderActions; outboundTx: string }
-      | { depositAddress: string },
-      string
-    >
-  >((initResult) => {
-    if (initResult.val === null || initResult.error) {
-      return new Result(false, null, initResult.error);
-    }
-    if (typeof initResult.val === 'object') {
-      return new Result(true, initResult.val);
-    }
-    const inboundTx = initResult.val;
-    console.log({ inboundTx });
-    return garden.execute().then(() => {
-      return Promise.any([
-        new Promise<Result<null, string>>((resolve) => {
-          const onError = (_: MatchedOrder, error: string) => {
-            garden.off('error', onError);
-            resolve(new Result(false, null, error));
-          };
-          garden.on('error', onError);
-        }),
-        new Promise<
-          Result<{ orderAction: OrderActions; outboundTx: string }, string>
-        >((resolve) => {
-          const onSuccess = (
-            _: MatchedOrder,
-            orderAction: OrderActions,
-            outboundTx: string,
-          ) => {
-            garden.off('success', onSuccess);
-            resolve(new Result(true, { orderAction, outboundTx }));
-          };
-          garden.on('success', onSuccess);
-        }),
-      ]);
+      return garden.swap(swapParams) as unknown as Promise<
+        Result<MatchedOrder, string>
+      >;
+    })
+    .then<Result<null | string | { depositAddress: string }, string>>(
+      (result) => {
+        if (result.val === null || result.error) {
+          return new Result(false, null, result.error);
+        }
+        const matchedOrder = result.val;
+        console.dir({ matchedOrder }, { depth: null });
+        if (isEVM(fromAsset.chain)) {
+          if (!garden.evmHTLC) {
+            // note that EVM HTLC is required to swap
+            return new Result(false, null, 'EVM HTLC is not available');
+          }
+          return garden.evmHTLC.initiate(matchedOrder);
+        }
+        const withDepositAddress = {
+          depositAddress: matchedOrder.source_swap.swap_id,
+        };
+        return new Result(true, withDepositAddress, '');
+      },
+    )
+    .then<
+      Result<
+        | null
+        | { orderAction: OrderActions; outboundTx: string }
+        | { depositAddress: string },
+        string
+      >
+    >((initResult) => {
+      if (initResult.val === null || initResult.error) {
+        return new Result(false, null, initResult.error);
+      }
+      if (typeof initResult.val === 'object') {
+        return new Result(true, initResult.val);
+      }
+      const inboundTx = initResult.val;
+      console.log({ inboundTx });
+      return garden.execute().then(() => {
+        return Promise.any([
+          new Promise<Result<null, string>>((resolve) => {
+            const onError = (_: MatchedOrder, error: string) => {
+              garden.off('error', onError);
+              resolve(new Result(false, null, error));
+            };
+            garden.on('error', onError);
+          }),
+          new Promise<
+            Result<{ orderAction: OrderActions; outboundTx: string }, string>
+          >((resolve) => {
+            const onSuccess = (
+              _: MatchedOrder,
+              orderAction: OrderActions,
+              outboundTx: string,
+            ) => {
+              garden.off('success', onSuccess);
+              resolve(new Result(true, { orderAction, outboundTx }));
+            };
+            garden.on('success', onSuccess);
+          }),
+        ]);
+      });
+    })
+    .catch((error) => {
+      return new Result(false, null, String(error));
+    })
+    .then((result) => {
+      if (result.error || result.val === null) {
+        console.error(result.error);
+        return;
+      }
+      console.log(result.val);
     });
-  })
-  .catch((error) => {
-    return new Result(false, null, String(error));
-  })
-  .then((result) => {
-    if (result.error || result.val === null) {
-      console.error(result.error);
-      return;
-    }
-    console.log(result.val);
+};
+
+if (import.meta.main) {
+  getQuote({
+    amountUnit,
+    fromAsset,
+    toAsset,
   });
+}
