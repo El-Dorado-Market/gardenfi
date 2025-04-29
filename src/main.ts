@@ -220,6 +220,18 @@ export const getQuote = (props: {
     });
 };
 
+export const getOrder = ({
+  orderId,
+}: { orderId: string }): Promise<MatchedOrder> => {
+  return fetch(gardenApiUrl + '/orders/id/' + orderId + '/matched')
+    .then((res) => {
+      return res.json();
+    })
+    .then((order: MatchedOrder) => {
+      return order;
+    });
+};
+
 if (import.meta.main) {
   getQuote({
     amountUnit,
