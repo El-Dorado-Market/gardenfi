@@ -46,7 +46,7 @@ if (!fromAssetKey) {
 }
 const fromAsset = mainnetAssets[fromAssetKey];
 if (!fromAsset) {
-  throw new Error(`Invalid FROM_ASSET_KEY: ${fromAssetKey}`);
+  throw new Error('Invalid FROM_ASSET_KEY: ' + fromAssetKey);
 }
 
 const mnemonic = process.env.MNEMONIC;
@@ -60,8 +60,40 @@ if (!toAssetKey) {
 }
 const toAsset = mainnetAssets[toAssetKey];
 if (!toAsset) {
-  throw new Error(`Invalid TO_ASSET_KEY: ${toAssetKey}`);
+  throw new Error('Invalid TO_ASSET_KEY: ' + toAssetKey);
 }
+// #endregion
+
+// #region garden
+const account = mnemonicToAccount(mnemonic);
+const digestKeyResult = DigestKey.generateRandom();
+if (digestKeyResult.error) {
+  throw new Error('Invalid digest key: ' + digestKeyResult.error);
+}
+console.dir({ digestKey: digestKeyResult.val }, { depth: null });
+const viemChain: Chain | undefined =
+  evmToViemChainMap[fromAsset.chain] || evmToViemChainMap[toAsset.chain];
+if (!viemChain) {
+  throw new Error(
+    'Neither from chain "' +
+      fromAsset.chain +
+      '" or to chain "' +
+      toAsset.chain +
+      '" are EVM chains',
+  );
+}
+const evmWalletClient = createWalletClient({
+  account,
+  chain: viemChain,
+  transport: http(evmRpcUrl),
+});
+export const garden = Garden.fromWallets({
+  environment: Environment.MAINNET,
+  digestKey: digestKeyResult.val,
+  wallets: {
+    evm: evmWalletClient,
+  },
+});
 // #endregion
 
 const constructOrderPair = (props: { fromAsset: Asset; toAsset: Asset }) => {
@@ -79,36 +111,9 @@ const constructOrderPair = (props: { fromAsset: Asset; toAsset: Asset }) => {
 export const getQuote = (props: {
   amountUnit: number;
   fromAsset: Asset;
+  garden: Garden;
   toAsset: Asset;
 }) => {
-  const account = mnemonicToAccount(mnemonic);
-  const digestKeyResult = DigestKey.generateRandom();
-  if (digestKeyResult.error) {
-    throw new Error(`Invalid digest key: ${digestKeyResult.error}`);
-  }
-  const viemChain: Chain | undefined =
-    evmToViemChainMap[fromAsset.chain] || evmToViemChainMap[toAsset.chain];
-  if (!viemChain) {
-    throw new Error(
-      'Neither from chain "' +
-        fromAsset.chain +
-        '" or to chain "' +
-        toAsset.chain +
-        '" are EVM chains',
-    );
-  }
-  const evmWalletClient = createWalletClient({
-    account,
-    chain: viemChain,
-    transport: http(evmRpcUrl),
-  });
-  const garden = Garden.fromWallets({
-    environment: Environment.MAINNET,
-    digestKey: digestKeyResult.val,
-    wallets: {
-      evm: evmWalletClient,
-    },
-  });
   const sendAmount = props.amountUnit * 10 ** props.fromAsset.decimals;
   const orderPair = constructOrderPair({
     fromAsset: props.fromAsset,
@@ -116,12 +121,11 @@ export const getQuote = (props: {
   });
   console.dir(
     {
-      digestKeyResult,
       quoteProps: props,
     },
     { depth: null },
   );
-  return garden.quote
+  return props.garden.quote
     .getQuote(orderPair, sendAmount, false)
     .then<Result<null | MatchedOrder, string>>((result) => {
       if (result.error) {
@@ -143,7 +147,7 @@ export const getQuote = (props: {
           btcAddress,
         },
       };
-      return garden.swap(swapParams) as unknown as Promise<
+      return props.garden.swap(swapParams) as unknown as Promise<
         Result<MatchedOrder, string>
       >;
     })
@@ -155,11 +159,11 @@ export const getQuote = (props: {
         const matchedOrder = result.val;
         console.dir({ matchedOrder }, { depth: null });
         if (isEVM(fromAsset.chain)) {
-          if (!garden.evmHTLC) {
+          if (!props.garden.evmHTLC) {
             // note that EVM HTLC is required to swap
             return new Result(false, null, 'EVM HTLC is not available');
           }
-          return garden.evmHTLC.initiate(matchedOrder);
+          return props.garden.evmHTLC.initiate(matchedOrder);
         }
         const withDepositAddress = {
           depositAddress: matchedOrder.source_swap.swap_id,
@@ -183,14 +187,14 @@ export const getQuote = (props: {
       }
       const inboundTx = initResult.val;
       console.log({ inboundTx });
-      return garden.execute().then(() => {
+      return props.garden.execute().then(() => {
         return Promise.any([
           new Promise<Result<null, string>>((resolve) => {
             const onError = (_: MatchedOrder, error: string) => {
-              garden.off('error', onError);
+              props.garden.off('error', onError);
               resolve(new Result(false, null, error));
             };
-            garden.on('error', onError);
+            props.garden.on('error', onError);
           }),
           new Promise<
             Result<{ orderAction: OrderActions; outboundTx: string }, string>
@@ -200,10 +204,10 @@ export const getQuote = (props: {
               orderAction: OrderActions,
               outboundTx: string,
             ) => {
-              garden.off('success', onSuccess);
+              props.garden.off('success', onSuccess);
               resolve(new Result(true, { orderAction, outboundTx }));
             };
-            garden.on('success', onSuccess);
+            props.garden.on('success', onSuccess);
           }),
         ]);
       });
@@ -218,6 +222,17 @@ export const getQuote = (props: {
       }
       console.log(result.val);
     });
+};
+
+export const evmRefund = (props: { orderId: string; garden: Garden }) => {
+  return getOrder({ orderId: props.orderId }).then<
+    Result<string | null, string>
+  >((order) => {
+    if (!props.garden.evmHTLC) {
+      return new Result(false, null, 'EVM HTLC is not available');
+    }
+    return props.garden.evmHTLC.refund(order);
+  });
 };
 
 export const getOrder = ({
@@ -236,6 +251,7 @@ if (import.meta.main) {
   getQuote({
     amountUnit,
     fromAsset,
+    garden,
     toAsset,
   });
 }
