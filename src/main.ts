@@ -1,10 +1,13 @@
 import { createWalletClient, http } from 'viem';
-import type { Chain } from 'viem/chains';
+import type { Chain as ViemChain } from 'viem/chains';
 import {
   API,
+  BlockNumberFetcher,
   EvmRelay,
   evmToViemChainMap,
   Garden,
+  type OrderWithStatus,
+  ParseOrderStatus,
   Quote,
   type OrderActions,
   type SwapParams,
@@ -13,6 +16,7 @@ import { Environment, DigestKey, Result, Url, Siwe } from '@gardenfi/utils';
 import { mnemonicToAccount } from 'viem/accounts';
 import {
   type Asset,
+  type Chain,
   isEVM,
   type MatchedOrder,
   SupportedAssets,
@@ -74,7 +78,7 @@ if (digestKeyResult.error) {
   throw new Error('Invalid digest key: ' + digestKeyResult.error);
 }
 console.dir({ digestKey: digestKeyResult.val }, { depth: null });
-const viemChain: Chain | undefined =
+const viemChain: ViemChain | undefined =
   evmToViemChainMap[fromAsset.chain] || evmToViemChainMap[toAsset.chain];
 if (!viemChain) {
   throw new Error(
@@ -105,6 +109,30 @@ export const garden = Garden.fromWallets({
 });
 // #endregion
 
+const assignOrderStatus = ({
+  blockNumbers,
+  order,
+}: { blockNumbers: BlockNumbers; order: MatchedOrder }): OrderWithStatus => {
+  const sourceChain = order.source_swap.chain;
+  const destinationChain = order.destination_swap.chain;
+  const sourceChainBlockNumber = blockNumbers[sourceChain];
+  const destinationChainBlockNumber = blockNumbers[destinationChain];
+  const status = ParseOrderStatus(
+    order,
+    sourceChainBlockNumber,
+    destinationChainBlockNumber,
+  );
+  const orderWithStatus = {
+    ...order,
+    status,
+  };
+  return orderWithStatus;
+};
+
+export type BlockNumbers = {
+  [key in Chain]: number;
+};
+
 const constructOrderPair = (props: { fromAsset: Asset; toAsset: Asset }) => {
   return (
     props.fromAsset.chain +
@@ -115,6 +143,13 @@ const constructOrderPair = (props: { fromAsset: Asset; toAsset: Asset }) => {
     ':' +
     props.toAsset.atomicSwapAddress
   );
+};
+
+const fetchBlockNumbers = () => {
+  return new BlockNumberFetcher(
+    api.info,
+    Environment.MAINNET,
+  ).fetchBlockNumbers();
 };
 
 export const getQuote = (props: {
@@ -231,13 +266,49 @@ export const getQuote = (props: {
 
 export const getOrder = ({
   orderId,
-}: { orderId: string }): Promise<MatchedOrder> => {
+}: { orderId: string }): Promise<Result<null | MatchedOrder, string>> => {
   return fetch(gardenApiUrl + '/orders/id/' + orderId + '/matched')
     .then((res) => {
       return res.json();
     })
-    .then((order: MatchedOrder) => {
-      return order;
+    .then(
+      ({ result: order }: { status: string; result?: null | MatchedOrder }) => {
+        if (!order) {
+          return new Result(false, null, 'Failed to get order: ' + orderId);
+        }
+        return new Result(true, order);
+      },
+    );
+};
+
+export const getOrderWithStatus = ({
+  orderId,
+}: { orderId: string }): Promise<Result<null | OrderWithStatus, string>> => {
+  return getOrder({ orderId })
+    .then<
+      Result<null | { blockNumbers: BlockNumbers; order: MatchedOrder }, string>
+    >((orderResult) => {
+      if (orderResult.error || orderResult.val === null) {
+        return new Result(false, null, orderResult.error);
+      }
+      const order = orderResult.val;
+      return fetchBlockNumbers().then((blockNumbersResult) => {
+        if (blockNumbersResult.error) {
+          return new Result(false, null, blockNumbersResult.error);
+        }
+        return new Result(true, {
+          blockNumbers: blockNumbersResult.val,
+          order,
+        });
+      });
+    })
+    .then((result) => {
+      if (result.error || result.val === null) {
+        return new Result(false, null, result.error);
+      }
+      const orderWithStatus = assignOrderStatus(result.val);
+
+      return new Result(true, orderWithStatus);
     });
 };
 
