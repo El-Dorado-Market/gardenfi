@@ -1,12 +1,15 @@
 import { createWalletClient, http } from 'viem';
 import type { Chain } from 'viem/chains';
 import {
+  API,
+  EvmRelay,
   evmToViemChainMap,
   Garden,
+  Quote,
   type OrderActions,
   type SwapParams,
 } from '@gardenfi/core';
-import { Environment, DigestKey, Result } from '@gardenfi/utils';
+import { Environment, DigestKey, Result, Url, Siwe } from '@gardenfi/utils';
 import { mnemonicToAccount } from 'viem/accounts';
 import {
   type Asset,
@@ -87,6 +90,12 @@ const evmWalletClient = createWalletClient({
   chain: viemChain,
   transport: http(evmRpcUrl),
 });
+const api = API.mainnet;
+const evmHTLC = new EvmRelay(
+  api.evmRelay,
+  evmWalletClient,
+  Siwe.fromDigestKey(new Url(api.auth), digestKeyResult.val),
+);
 export const garden = Garden.fromWallets({
   environment: Environment.MAINNET,
   digestKey: digestKeyResult.val,
@@ -125,7 +134,7 @@ export const getQuote = (props: {
     },
     { depth: null },
   );
-  return props.garden.quote
+  return new Quote(gardenApiUrl + '/quote')
     .getQuote(orderPair, sendAmount, false)
     .then<Result<null | MatchedOrder, string>>((result) => {
       if (result.error) {
@@ -159,11 +168,7 @@ export const getQuote = (props: {
         const matchedOrder = result.val;
         console.dir({ matchedOrder }, { depth: null });
         if (isEVM(fromAsset.chain)) {
-          if (!props.garden.evmHTLC) {
-            // note that EVM HTLC is required to swap
-            return new Result(false, null, 'EVM HTLC is not available');
-          }
-          return props.garden.evmHTLC.initiate(matchedOrder);
+          return evmHTLC.initiate(matchedOrder);
         }
         const withDepositAddress = {
           depositAddress: matchedOrder.source_swap.swap_id,
@@ -222,17 +227,6 @@ export const getQuote = (props: {
       }
       console.log(result.val);
     });
-};
-
-export const evmRefund = (props: { orderId: string; garden: Garden }) => {
-  return getOrder({ orderId: props.orderId }).then<
-    Result<string | null, string>
-  >((order) => {
-    if (!props.garden.evmHTLC) {
-      return new Result(false, null, 'EVM HTLC is not available');
-    }
-    return props.garden.evmHTLC.refund(order);
-  });
 };
 
 export const getOrder = ({
