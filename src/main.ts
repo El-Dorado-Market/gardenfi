@@ -154,7 +154,7 @@ const fetchBlockNumbers = () => {
   ).fetchBlockNumbers();
 };
 
-export const getQuote = (props: {
+export const swap = (props: {
   amountUnit: number;
   fromAsset: Asset;
   garden: Garden;
@@ -315,7 +315,7 @@ export const getOrderWithStatus = ({
 };
 
 if (import.meta.main) {
-  getQuote({
+  swap({
     amountUnit,
     fromAsset,
     garden,
