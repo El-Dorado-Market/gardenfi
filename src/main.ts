@@ -33,6 +33,12 @@ if (!btcAddress) {
   throw new Error('BTC_ADDRESS is not set');
 }
 
+const digestKey = process.env.DIGEST_KEY;
+const digestKeyResult = digestKey && DigestKey.from(digestKey);
+if (!digestKeyResult || !digestKeyResult.val || digestKeyResult.error) {
+  throw new Error('Invalid digest key: ' + digestKeyResult);
+}
+
 const gardenApiUrl = process.env.GARDEN_API_URL;
 if (!gardenApiUrl) {
   throw new Error('GARDEN_API_URL is not set');
@@ -73,11 +79,7 @@ if (!toAsset) {
 
 // #region garden
 const account = mnemonicToAccount(mnemonic);
-const digestKeyResult = DigestKey.generateRandom();
-if (digestKeyResult.error) {
-  throw new Error('Invalid digest key: ' + digestKeyResult.error);
-}
-console.dir({ digestKey: digestKeyResult.val }, { depth: null });
+console.dir({ digestKey }, { depth: null });
 const viemChain: ViemChain | undefined =
   evmToViemChainMap[fromAsset.chain] || evmToViemChainMap[toAsset.chain];
 if (!viemChain) {
