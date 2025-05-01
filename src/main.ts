@@ -165,7 +165,10 @@ export const getQuote = (props: {
   });
   console.dir(
     {
-      quoteProps: props,
+      quoteProps: {
+        orderPair,
+        sendAmount,
+      },
     },
     { depth: null },
   );
@@ -201,7 +204,7 @@ export const getQuote = (props: {
           return new Result(false, null, result.error);
         }
         const matchedOrder = result.val;
-        console.dir({ matchedOrder }, { depth: null });
+        console.dir({ swap: matchedOrder }, { depth: null });
         if (isEVM(fromAsset.chain)) {
           return evmHTLC.initiate(matchedOrder);
         }
@@ -221,9 +224,6 @@ export const getQuote = (props: {
     >((initResult) => {
       if (initResult.val === null || initResult.error) {
         return new Result(false, null, initResult.error);
-      }
-      if (typeof initResult.val === 'object') {
-        return new Result(true, initResult.val);
       }
       const inboundTx = initResult.val;
       console.log({ inboundTx });
