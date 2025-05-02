@@ -229,11 +229,11 @@ export const swap = (props: {
       }
       const inboundTx = initResult.val;
       console.log({ inboundTx });
-      return props.garden.execute().then(() => {
+      return props.garden.execute().then((unsubscribe) => {
         return Promise.any([
           new Promise<Result<null, string>>((resolve) => {
             const onError = (_: MatchedOrder, error: string) => {
-              props.garden.off('error', onError);
+              unsubscribe();
               resolve(new Result(false, null, error));
             };
             props.garden.on('error', onError);
@@ -246,7 +246,7 @@ export const swap = (props: {
               orderAction: OrderActions,
               outboundTx: string,
             ) => {
-              props.garden.off('success', onSuccess);
+              unsubscribe();
               resolve(new Result(true, { orderAction, outboundTx }));
             };
             props.garden.on('success', onSuccess);
