@@ -1,10 +1,5 @@
-import { createWalletClient, http } from 'viem';
-import type { Chain as ViemChain } from 'viem/chains';
 import {
-  API,
   BlockNumberFetcher,
-  EvmRelay,
-  evmToViemChainMap,
   Garden,
   type OrderWithStatus,
   ParseOrderStatus,
@@ -12,15 +7,15 @@ import {
   type OrderActions,
   type SwapParams,
 } from '@gardenfi/core';
-import { Environment, DigestKey, Result, Url, Siwe } from '@gardenfi/utils';
-import { mnemonicToAccount } from 'viem/accounts';
+import { Environment, Result } from '@gardenfi/utils';
 import {
   type Asset,
   type Chain,
   isEVM,
   type MatchedOrder,
-  SupportedAssets,
 } from '@gardenfi/orderbook';
+import { api, digestKey, fromAsset, toAsset } from './utils';
+import { evmHTLC, evmWalletClient } from './evm';
 
 // #region env
 const amountUnit = Number.parseFloat(process.env.AMOUNT_UNIT ?? '');
@@ -33,78 +28,16 @@ if (!btcAddress) {
   throw new Error('BTC_ADDRESS is not set');
 }
 
-const digestKey = process.env.DIGEST_KEY;
-const digestKeyResult = digestKey && DigestKey.from(digestKey);
-if (!digestKeyResult || !digestKeyResult.val || digestKeyResult.error) {
-  throw new Error('Invalid digest key: ' + digestKeyResult);
-}
-
 const gardenApiUrl = process.env.GARDEN_API_URL;
 if (!gardenApiUrl) {
   throw new Error('GARDEN_API_URL is not set');
 }
-
-const evmRpcUrl = process.env.EVM_RPC_URL;
-if (!evmRpcUrl) {
-  throw new Error('EVM_RPC_URL is not set');
-}
-
-type SupportedMainnetAssets = typeof SupportedAssets.mainnet;
-const mainnetAssets: {
-  [K in string]?: SupportedMainnetAssets[keyof SupportedMainnetAssets];
-} = SupportedAssets.mainnet;
-const fromAssetKey = process.env.FROM_ASSET_KEY;
-if (!fromAssetKey) {
-  throw new Error('FROM_ASSET_KEY is not set');
-}
-const fromAsset = mainnetAssets[fromAssetKey];
-if (!fromAsset) {
-  throw new Error('Invalid FROM_ASSET_KEY: ' + fromAssetKey);
-}
-
-const mnemonic = process.env.MNEMONIC;
-if (!mnemonic) {
-  throw new Error('MNEMONIC is not set');
-}
-
-const toAssetKey = process.env.TO_ASSET_KEY;
-if (!toAssetKey) {
-  throw new Error('TO_ASSET_KEY is not set');
-}
-const toAsset = mainnetAssets[toAssetKey];
-if (!toAsset) {
-  throw new Error('Invalid TO_ASSET_KEY: ' + toAssetKey);
-}
 // #endregion
 
 // #region garden
-const account = mnemonicToAccount(mnemonic);
-console.dir({ digestKey }, { depth: null });
-const viemChain: ViemChain | undefined =
-  evmToViemChainMap[fromAsset.chain] || evmToViemChainMap[toAsset.chain];
-if (!viemChain) {
-  throw new Error(
-    'Neither from chain "' +
-      fromAsset.chain +
-      '" or to chain "' +
-      toAsset.chain +
-      '" are EVM chains',
-  );
-}
-const evmWalletClient = createWalletClient({
-  account,
-  chain: viemChain,
-  transport: http(evmRpcUrl),
-});
-const api = API.mainnet;
-const evmHTLC = new EvmRelay(
-  api.evmRelay,
-  evmWalletClient,
-  Siwe.fromDigestKey(new Url(api.auth), digestKeyResult.val),
-);
 export const garden = Garden.fromWallets({
   environment: Environment.MAINNET,
-  digestKey: digestKeyResult.val,
+  digestKey,
   wallets: {
     evm: evmWalletClient,
   },
