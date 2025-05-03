@@ -1,28 +1,30 @@
 import * as ecc from 'tiny-secp256k1';
 import ECPairFactory from 'ecpair';
 import { trim0x } from '@catalogfi/utils';
-import { Err, Ok } from '@gardenfi/utils';
-import { with0x } from '@gardenfi/utils';
+import { with0x, type Result } from '@gardenfi/utils';
 import { sha256 } from 'viem';
 
 export const generateSecret = ({
   digestKey,
   nonce,
-}: { digestKey: string; nonce: string }) => {
+}: { digestKey: string; nonce: string }): Result<
+  { secret: string; secretHash: string },
+  string
+> => {
   const signature = signMessage({ digestKey, nonce });
-  if (signature.error) {
-    return Err(signature.error);
+  if (!signature.ok) {
+    return { error: signature.error, ok: false };
   }
 
   const secret = sha256(with0x(signature.val));
   const secretHash = sha256(secret);
-  return Ok({ secret, secretHash });
+  return { ok: true, val: { secret, secretHash } };
 };
 
 export const signMessage = ({
   digestKey,
   nonce,
-}: { digestKey: string; nonce: string }) => {
+}: { digestKey: string; nonce: string }): Result<string, string> => {
   const ECPair = ECPairFactory(ecc);
 
   const signMessage = 'Garden.fi' + nonce.toString();
@@ -31,9 +33,12 @@ export const signMessage = ({
 
   const digestKeyBuf = Buffer.from(trim0x(digestKey), 'hex');
   if (digestKeyBuf.length !== 32) {
-    return Err('Invalid private key length. Expected 32 bytes.');
+    return {
+      error: 'Invalid private key length. Expected 32 bytes.',
+      ok: false,
+    };
   }
   const keyPair = ECPair.fromPrivateKey(digestKeyBuf);
   const signature = keyPair.sign(Buffer.from(trim0x(hash), 'hex'));
-  return Ok(signature.toString('hex'));
+  return { ok: true, val: signature.toString('hex') };
 };

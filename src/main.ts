@@ -7,7 +7,7 @@ import {
   type OrderActions,
   type SwapParams,
 } from '@gardenfi/core';
-import { Environment, Result } from '@gardenfi/utils';
+import { Environment, type Err, type Ok, type Result } from '@gardenfi/utils';
 import {
   type Asset,
   type Chain,
@@ -32,7 +32,7 @@ if (!btcAddress) {
 // #region garden
 export const garden = Garden.fromWallets({
   environment: Environment.MAINNET,
-  digestKey,
+  digestKey: digestKey.digestKey,
   wallets: {
     evm: evmWalletClient,
   },
@@ -84,14 +84,14 @@ export const swap = (props: {
   );
   return new Quote(api.quote)
     .getQuote(orderPair, sendAmount, false)
-    .then<Result<null | MatchedOrder, string>>((result) => {
+    .then<Result<MatchedOrder, string>>((result) => {
       if (result.error) {
-        return new Result(false, null, result.error);
+        return { error: result.error, ok: false };
       }
       console.dir({ quote: result.val }, { depth: null });
       const firstQuote = Object.entries(result.val.quotes).at(0);
       if (!firstQuote) {
-        return new Result(false, null, 'Missing quote');
+        return { error: 'Missing quote', ok: false };
       }
       const [strategyId, quoteAmount] = firstQuote;
       const swapParams: SwapParams = {
@@ -104,69 +104,66 @@ export const swap = (props: {
           btcAddress,
         },
       };
-      return props.garden.swap(swapParams) as unknown as Promise<
+      return props.garden.swap(swapParams) as Promise<
         Result<MatchedOrder, string>
       >;
     })
-    .then<Result<null | string | { depositAddress: string }, string>>(
-      (result) => {
-        if (result.val === null || result.error) {
-          return new Result(false, null, result.error);
-        }
-        const matchedOrder = result.val;
-        console.dir({ swap: matchedOrder }, { depth: null });
-        if (isEVM(fromAsset.chain)) {
-          return evmHTLC.initiate(matchedOrder);
-        }
-        const withDepositAddress = {
-          depositAddress: matchedOrder.source_swap.swap_id,
-        };
-        return new Result(true, withDepositAddress, '');
-      },
-    )
+    .then<Result<{ depositAddress: string } | string, string>>((result) => {
+      if (!result.ok) {
+        return { error: result.error, ok: false };
+      }
+      const matchedOrder = result.val;
+      console.dir({ swap: matchedOrder }, { depth: null });
+      if (isEVM(fromAsset.chain)) {
+        return evmHTLC.initiate(matchedOrder);
+      }
+      const withDepositAddress = {
+        depositAddress: matchedOrder.source_swap.swap_id,
+      };
+      return { ok: true, val: withDepositAddress };
+    })
     .then<
       Result<
-        | null
-        | { orderAction: OrderActions; outboundTx: string }
-        | { depositAddress: string },
+        | { depositAddress: string }
+        | { orderAction: OrderActions; outboundTx: string },
         string
       >
     >((initResult) => {
-      if (initResult.val === null || initResult.error) {
-        return new Result(false, null, initResult.error);
+      if (!initResult.ok) {
+        return { error: initResult.error, ok: false };
       }
       const inboundTx = initResult.val;
       console.log({ inboundTx });
       return props.garden.execute().then((unsubscribe) => {
         return Promise.any([
-          new Promise<Result<null, string>>((resolve) => {
+          new Promise<Err<string>>((resolve) => {
             const onError = (_: MatchedOrder, error: string) => {
               unsubscribe();
-              resolve(new Result(false, null, error));
+              resolve({ error, ok: false });
             };
             props.garden.on('error', onError);
           }),
-          new Promise<
-            Result<{ orderAction: OrderActions; outboundTx: string }, string>
-          >((resolve) => {
-            const onSuccess = (
-              _: MatchedOrder,
-              orderAction: OrderActions,
-              outboundTx: string,
-            ) => {
-              unsubscribe();
-              resolve(new Result(true, { orderAction, outboundTx }));
-            };
-            props.garden.on('success', onSuccess);
-          }),
+          new Promise<Ok<{ orderAction: OrderActions; outboundTx: string }>>(
+            (resolve) => {
+              const onSuccess = (
+                _: MatchedOrder,
+                orderAction: OrderActions,
+                outboundTx: string,
+              ) => {
+                unsubscribe();
+                resolve({ ok: true, val: { orderAction, outboundTx } });
+              };
+              props.garden.on('success', onSuccess);
+            },
+          ),
         ]);
       });
     })
-    .catch((error) => {
-      return new Result(false, null, String(error));
+    .catch<Err<string>>(() => {
+      return { error: 'Unexpected error occurred', ok: false };
     })
     .then((result) => {
-      if (result.error || result.val === null) {
+      if (!result.ok) {
         console.error(result.error);
         return;
       }
@@ -176,7 +173,7 @@ export const swap = (props: {
 
 export const getOrder = ({
   orderId,
-}: { orderId: string }): Promise<Result<null | MatchedOrder, string>> => {
+}: { orderId: string }): Promise<Result<MatchedOrder, string>> => {
   return fetch(api.orderbook + '/orders/id/' + orderId + '/matched')
     .then((res) => {
       return res.json();
@@ -187,22 +184,22 @@ export const getOrder = ({
         result?: null | MatchedOrder;
       };
       if (!order) {
-        return new Result(false, null, 'Failed to get order: ' + orderId);
+        return { error: 'Failed to get order: ' + orderId, ok: false };
       }
-      return new Result(true, order);
+      return { ok: true, val: order };
     });
 };
 
 export const getOrderWithStatus = ({
   orderId,
-}: { orderId: string }): Promise<Result<null | OrderWithStatus, string>> => {
+}: { orderId: string }): Promise<Result<OrderWithStatus, string>> => {
   return Promise.all([getOrder({ orderId }), fetchBlockNumbers()]).then(
     ([orderResult, blockNumbersResult]) => {
-      if (orderResult.error || orderResult.val === null) {
-        return new Result(false, null, orderResult.error);
+      if (!orderResult.ok) {
+        return { error: orderResult.error, ok: false };
       }
       if (blockNumbersResult.error) {
-        return new Result(false, null, blockNumbersResult.error);
+        return { error: blockNumbersResult.error, ok: false };
       }
       const order = orderResult.val;
       const blockNumbers = blockNumbersResult.val;
@@ -216,7 +213,7 @@ export const getOrderWithStatus = ({
         destinationChainBlockNumber,
       );
 
-      return new Result(true, { ...order, status });
+      return { ok: true, val: { ...order, status } };
     },
   );
 };

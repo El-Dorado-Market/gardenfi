@@ -5,8 +5,8 @@ import {
   BitcoinWallet,
 } from '@catalogfi/wallets';
 import { digestKey } from './utils';
-import { Err, Ok } from '@catalogfi/utils';
 import { toXOnly } from '@gardenfi/core';
+import type { Result } from '@gardenfi/utils';
 
 export const provider = new BitcoinProvider(BitcoinNetwork.Mainnet);
 
@@ -15,12 +15,12 @@ export const btcWallet = BitcoinWallet.fromPrivateKey(
   provider,
 );
 
-export const getBtcAddress = () => {
+export const getBtcAddress = (): Promise<Result<string, string>> => {
   return btcWallet.getPublicKey().then((pubKey) => {
     if (!pubKey || !isValidBitcoinPubKey({ pubKey })) {
-      return Err('Invalid btc public key');
+      return { error: 'Invalid btc public key', ok: false };
     }
-    return Ok(toXOnly(pubKey));
+    return { ok: true, val: toXOnly(pubKey) };
   });
 };
 
