@@ -7,14 +7,14 @@ import {
   getTimeLock,
   isBitcoin,
   isMainnet,
-  Orderbook,
 } from '@gardenfi/orderbook';
 import BigNumber from 'bignumber.js';
 import { generateSecret } from './secretManager';
 import { api, digestKey } from './utils';
-import { Url, type Result } from '@gardenfi/utils';
+import type { Result } from '@gardenfi/utils';
 import { auth } from './auth';
 import { getBtcAddress } from './btc';
+import { orderbook } from './orderbook';
 
 export type SwapProps = SwapParams & { evmAddress: string };
 export const swap = (props: SwapProps): Promise<Result<string, string>> => {
@@ -84,10 +84,9 @@ export const swap = (props: SwapProps): Promise<Result<string, string>> => {
       if (!attestedQuoteResult.ok) {
         return { error: attestedQuoteResult.error, ok: false };
       }
-      return new Orderbook(new Url(api.orderbook)).createOrder(
-        attestedQuoteResult.val,
-        auth,
-      ) as Promise<Result<string, string>>;
+      return orderbook.createOrder(attestedQuoteResult.val, auth) as Promise<
+        Result<string, string>
+      >;
     });
 };
 
