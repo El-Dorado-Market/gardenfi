@@ -201,14 +201,16 @@ export const getOrder = ({
     .then((res) => {
       return res.json();
     })
-    .then(
-      ({ result: order }: { status: string; result?: null | MatchedOrder }) => {
-        if (!order) {
-          return new Result(false, null, 'Failed to get order: ' + orderId);
-        }
-        return new Result(true, order);
-      },
-    );
+    .then((response) => {
+      const { result: order } = response as {
+        status: string;
+        result?: null | MatchedOrder;
+      };
+      if (!order) {
+        return new Result(false, null, 'Failed to get order: ' + orderId);
+      }
+      return new Result(true, order);
+    });
 };
 
 export const getOrderWithStatus = ({

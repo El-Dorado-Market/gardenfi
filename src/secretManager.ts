@@ -1,6 +1,7 @@
 import * as ecc from 'tiny-secp256k1';
 import ECPairFactory from 'ecpair';
-import { Err, Ok, trim0x } from '@catalogfi/utils';
+import { trim0x } from '@catalogfi/utils';
+import { Err, Ok } from '@gardenfi/utils';
 import { with0x } from '@gardenfi/utils';
 import { sha256 } from 'viem';
 

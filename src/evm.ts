@@ -16,8 +16,9 @@ if (!mnemonic) {
 
 export const account = mnemonicToAccount(mnemonic);
 
+export const chainMap: { [K in string]?: ViemChain } = evmToViemChainMap;
 const viemChain: ViemChain | undefined =
-  evmToViemChainMap[fromAsset.chain] || evmToViemChainMap[toAsset.chain];
+  chainMap[fromAsset.chain] || chainMap[toAsset.chain];
 if (!viemChain) {
   throw new Error(
     'Neither from chain "' +
