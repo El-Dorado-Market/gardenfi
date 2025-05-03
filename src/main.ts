@@ -27,11 +27,6 @@ const btcAddress = process.env.BTC_ADDRESS;
 if (!btcAddress) {
   throw new Error('BTC_ADDRESS is not set');
 }
-
-const gardenApiUrl = process.env.GARDEN_API_URL;
-if (!gardenApiUrl) {
-  throw new Error('GARDEN_API_URL is not set');
-}
 // #endregion
 
 // #region garden
@@ -107,7 +102,7 @@ export const swap = (props: {
     },
     { depth: null },
   );
-  return new Quote(gardenApiUrl + '/quote')
+  return new Quote(api.quote)
     .getQuote(orderPair, sendAmount, false)
     .then<Result<null | MatchedOrder, string>>((result) => {
       if (result.error) {
@@ -202,7 +197,7 @@ export const swap = (props: {
 export const getOrder = ({
   orderId,
 }: { orderId: string }): Promise<Result<null | MatchedOrder, string>> => {
-  return fetch(gardenApiUrl + '/orders/id/' + orderId + '/matched')
+  return fetch(api.orderbook + '/orders/id/' + orderId + '/matched')
     .then((res) => {
       return res.json();
     })
