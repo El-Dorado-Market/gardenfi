@@ -39,26 +39,6 @@ export const garden = Garden.fromWallets({
 });
 // #endregion
 
-const assignOrderStatus = ({
-  blockNumbers,
-  order,
-}: { blockNumbers: BlockNumbers; order: MatchedOrder }): OrderWithStatus => {
-  const sourceChain = order.source_swap.chain;
-  const destinationChain = order.destination_swap.chain;
-  const sourceChainBlockNumber = blockNumbers[sourceChain];
-  const destinationChainBlockNumber = blockNumbers[destinationChain];
-  const status = ParseOrderStatus(
-    order,
-    sourceChainBlockNumber,
-    destinationChainBlockNumber,
-  );
-  const orderWithStatus = {
-    ...order,
-    status,
-  };
-  return orderWithStatus;
-};
-
 export type BlockNumbers = {
   [key in Chain]: number;
 };
@@ -216,32 +196,29 @@ export const getOrder = ({
 export const getOrderWithStatus = ({
   orderId,
 }: { orderId: string }): Promise<Result<null | OrderWithStatus, string>> => {
-  return getOrder({ orderId })
-    .then<
-      Result<null | { blockNumbers: BlockNumbers; order: MatchedOrder }, string>
-    >((orderResult) => {
+  return Promise.all([getOrder({ orderId }), fetchBlockNumbers()]).then(
+    ([orderResult, blockNumbersResult]) => {
       if (orderResult.error || orderResult.val === null) {
         return new Result(false, null, orderResult.error);
       }
-      const order = orderResult.val;
-      return fetchBlockNumbers().then((blockNumbersResult) => {
-        if (blockNumbersResult.error) {
-          return new Result(false, null, blockNumbersResult.error);
-        }
-        return new Result(true, {
-          blockNumbers: blockNumbersResult.val,
-          order,
-        });
-      });
-    })
-    .then((result) => {
-      if (result.error || result.val === null) {
-        return new Result(false, null, result.error);
+      if (blockNumbersResult.error) {
+        return new Result(false, null, blockNumbersResult.error);
       }
-      const orderWithStatus = assignOrderStatus(result.val);
+      const order = orderResult.val;
+      const blockNumbers = blockNumbersResult.val;
+      const sourceChain = order.source_swap.chain;
+      const destinationChain = order.destination_swap.chain;
+      const sourceChainBlockNumber = blockNumbers[sourceChain];
+      const destinationChainBlockNumber = blockNumbers[destinationChain];
+      const status = ParseOrderStatus(
+        order,
+        sourceChainBlockNumber,
+        destinationChainBlockNumber,
+      );
 
-      return new Result(true, orderWithStatus);
-    });
+      return new Result(true, { ...order, status });
+    },
+  );
 };
 
 if (import.meta.main) {
