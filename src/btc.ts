@@ -7,9 +7,9 @@ import {
 import { digestKey } from './utils';
 import { toXOnly } from '@gardenfi/core';
 import type { Result } from '@gardenfi/utils';
+import * as bitcoin from 'bitcoinjs-lib';
 
 export const provider = new BitcoinProvider(BitcoinNetwork.Mainnet);
-
 export const btcWallet = BitcoinWallet.fromPrivateKey(
   digestKey.digestKey,
   provider,
@@ -22,6 +22,10 @@ export const getBtcAddress = (): Promise<Result<string, string>> => {
     }
     return { ok: true, val: toXOnly(pubKey) };
   });
+};
+
+export const getBtcNetwork = () => {
+  return bitcoin.networks.bitcoin;
 };
 
 export const isValidBitcoinPubKey = ({
