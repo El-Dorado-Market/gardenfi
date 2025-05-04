@@ -12,7 +12,7 @@ import {
   type MatchedOrder,
 } from '@gardenfi/orderbook';
 import { api, digestKey, fromAsset, toAsset } from './utils';
-import { evmHTLC, evmWalletClient } from './evm';
+import { evmWalletClient } from './evm';
 import { swap } from './swap';
 import { pollMatchedOrder } from './orderbook';
 
@@ -113,8 +113,8 @@ export const fetchQuote = (props: {
       }
       const matchedOrder = result.val;
       console.dir({ matchedOrder }, { depth: null });
-      if (isEVM(fromAsset.chain)) {
-        return evmHTLC.initiate(matchedOrder);
+      if (isEVM(fromAsset.chain) && garden.evmHTLC) {
+        return garden.evmHTLC.initiate(matchedOrder);
       }
       const withDepositAddress = {
         depositAddress: matchedOrder.source_swap.swap_id,

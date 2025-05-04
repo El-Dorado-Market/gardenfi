@@ -1,8 +1,7 @@
-import { EvmRelay, evmToViemChainMap } from '@gardenfi/core';
-import { api, fromAsset, toAsset } from './utils';
+import { evmToViemChainMap } from '@gardenfi/core';
+import { fromAsset, toAsset } from './utils';
 import { mnemonicToAccount } from 'viem/accounts';
 import { type Chain as ViemChain, createWalletClient, http } from 'viem';
-import { auth } from './auth';
 
 const evmRpcUrl = process.env.EVM_RPC_URL;
 if (!evmRpcUrl) {
@@ -33,5 +32,3 @@ export const evmWalletClient = createWalletClient({
   chain: viemChain,
   transport: http(evmRpcUrl),
 });
-
-export const evmHTLC = new EvmRelay(api.evmRelay, evmWalletClient, auth);
