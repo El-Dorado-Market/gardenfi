@@ -1,11 +1,7 @@
 import { Environment, Url, type Result } from '@gardenfi/utils';
 import { api } from './utils';
 import { Orderbook, type MatchedOrder } from '@gardenfi/orderbook';
-import {
-  BlockNumberFetcher,
-  ParseOrderStatus,
-  type OrderWithStatus,
-} from '@gardenfi/core';
+import { BlockNumberFetcher } from '@gardenfi/core';
 
 export const fetchBlockNumbers = () => {
   return new BlockNumberFetcher(
@@ -14,7 +10,7 @@ export const fetchBlockNumbers = () => {
   ).fetchBlockNumbers();
 };
 
-export const getOrder = ({
+export const getMatchedOrder = ({
   orderId,
 }: { orderId: string }): Promise<Result<MatchedOrder, string>> => {
   return fetch(api.orderbook + '/orders/id/' + orderId + '/matched')
@@ -24,7 +20,7 @@ export const getOrder = ({
     .then((response) => {
       const { result: order } = response as {
         status: string;
-        result?: null | MatchedOrder;
+        result: null | MatchedOrder;
       };
       if (!order) {
         return { error: 'Failed to get order: ' + orderId, ok: false };
@@ -33,32 +29,34 @@ export const getOrder = ({
     });
 };
 
-export const getOrderWithStatus = ({
-  orderId,
-}: { orderId: string }): Promise<Result<OrderWithStatus, string>> => {
-  return Promise.all([getOrder({ orderId }), fetchBlockNumbers()]).then(
-    ([orderResult, blockNumbersResult]) => {
-      if (!orderResult.ok) {
-        return { error: orderResult.error, ok: false };
-      }
-      if (blockNumbersResult.error) {
-        return { error: blockNumbersResult.error, ok: false };
-      }
-      const order = orderResult.val;
-      const blockNumbers = blockNumbersResult.val;
-      const sourceChain = order.source_swap.chain;
-      const destinationChain = order.destination_swap.chain;
-      const sourceChainBlockNumber = blockNumbers[sourceChain];
-      const destinationChainBlockNumber = blockNumbers[destinationChain];
-      const status = ParseOrderStatus(
-        order,
-        sourceChainBlockNumber,
-        destinationChainBlockNumber,
-      );
+export const orderbook = new Orderbook(new Url(api.orderbook));
 
-      return { ok: true, val: { ...order, status } };
+const attemptsThreshold = 20;
+const intervalMs = 1000;
+export const pollMatchedOrder = ({
+  attempt = 0,
+  orderId,
+}: { attempt?: number; orderId: string }): Promise<
+  Result<MatchedOrder, string>
+> => {
+  if (attempt >= attemptsThreshold) {
+    return Promise.resolve({ error: 'Exceeded attempt threshold', ok: false });
+  }
+  return getMatchedOrder({ orderId }).then<Result<MatchedOrder, string>>(
+    (matchedOrderResult) => {
+      if (matchedOrderResult.ok) {
+        return matchedOrderResult;
+      }
+      return new Promise<Result<MatchedOrder, string>>((resolve) => {
+        setTimeout(() => {
+          resolve(
+            pollMatchedOrder({
+              attempt: attempt + 1,
+              orderId,
+            }),
+          );
+        }, intervalMs);
+      });
     },
   );
 };
-
-export const orderbook = new Orderbook(new Url(api.orderbook));

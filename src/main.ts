@@ -13,6 +13,8 @@ import {
 } from '@gardenfi/orderbook';
 import { api, digestKey, fromAsset, toAsset } from './utils';
 import { evmHTLC, evmWalletClient } from './evm';
+import { swap } from './swap';
+import { pollMatchedOrder } from './orderbook';
 
 // #region env
 const amountUnit = Number.parseFloat(process.env.AMOUNT_UNIT ?? '');
@@ -74,7 +76,7 @@ export const fetchQuote = (props: {
   );
   return new Quote(api.quote)
     .getQuote(orderPair, sendAmount, false)
-    .then<Result<MatchedOrder, string>>((result) => {
+    .then<Result<string, string>>((result) => {
       if (result.error) {
         return { error: result.error, ok: false };
       }
@@ -94,16 +96,23 @@ export const fetchQuote = (props: {
           btcAddress,
         },
       };
-      return props.garden.swap(swapParams) as Promise<
-        Result<MatchedOrder, string>
-      >;
+      return swap({
+        ...swapParams,
+        evmAddress: evmWalletClient.account.address,
+      });
+    })
+    .then<Result<MatchedOrder, string>>((orderIdResult) => {
+      if (!orderIdResult.ok) {
+        return { error: orderIdResult.error, ok: false };
+      }
+      return pollMatchedOrder({ orderId: orderIdResult.val });
     })
     .then<Result<{ depositAddress: string } | string, string>>((result) => {
       if (!result.ok) {
         return { error: result.error, ok: false };
       }
       const matchedOrder = result.val;
-      console.dir({ swap: matchedOrder }, { depth: null });
+      console.dir({ matchedOrder }, { depth: null });
       if (isEVM(fromAsset.chain)) {
         return evmHTLC.initiate(matchedOrder);
       }
@@ -122,8 +131,10 @@ export const fetchQuote = (props: {
       if (!initResult.ok) {
         return { error: initResult.error, ok: false };
       }
-      const inboundTx = initResult.val;
-      console.log({ inboundTx });
+      if (typeof initResult.val === 'string') {
+        const inboundTx = initResult.val;
+        console.log({ inboundTx });
+      }
       return props.garden.execute().then((unsubscribe) => {
         return Promise.any([
           new Promise<Err<string>>((resolve) => {
