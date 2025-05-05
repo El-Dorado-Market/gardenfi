@@ -66,7 +66,7 @@ export const fetchQuote = (props: {
   );
   return new Quote(api.quote)
     .getQuote(orderPair, sendAmount, false)
-    .then<Result<string, string>>((result) => {
+    .then<Result<{ orderId: string; secret: string }, string>>((result) => {
       if (result.error) {
         return { error: result.error, ok: false };
       }
@@ -91,86 +91,116 @@ export const fetchQuote = (props: {
         evmAddress: evmWalletClient.account.address,
       });
     })
-    .then<Result<OrderWithAction, string>>((orderIdResult) => {
-      if (!orderIdResult.ok) {
-        return { error: orderIdResult.error, ok: false };
-      }
-      return pollOrder({
-        filter: (orderWithStatus) => {
-          return (
-            (orderWithStatus.action === OrderActions.Initiate && {
-              ok: true,
-              val: orderWithStatus,
-            }) || {
-              error:
-                'Expected order action to be initiate, received: ' +
-                orderWithStatus.action,
-              ok: false,
-            }
-          );
-        },
-        orderId: orderIdResult.val,
-      });
-    })
+    .then<Result<{ orderWithAction: OrderWithAction; secret: string }, string>>(
+      (result) => {
+        if (!result.ok) {
+          return { error: result.error, ok: false };
+        }
+        return pollOrder({
+          filter: (orderWithStatus) => {
+            return (
+              (orderWithStatus.action === OrderActions.Initiate && {
+                ok: true,
+                val: orderWithStatus,
+              }) || {
+                error:
+                  'Expected order action to be initiate, received: ' +
+                  orderWithStatus.action,
+                ok: false,
+              }
+            );
+          },
+          orderId: result.val.orderId,
+        }).then((orderWithActionResult) => {
+          if (!orderWithActionResult.ok) {
+            return orderWithActionResult;
+          }
+          return {
+            ok: true,
+            val: {
+              orderWithAction: orderWithActionResult.val,
+              secret: result.val.secret,
+            },
+          };
+        });
+      },
+    )
     .then<
       Result<
-        | { depositAddress: string; orderId: string }
-        | { inboundTx: string; orderId: string },
+        | { depositAddress: string; orderId: string; secret: string }
+        | { inboundTx: string; orderId: string; secret: string },
         string
       >
     >((result) => {
       if (!result.ok) {
         return { error: result.error, ok: false };
       }
-      const matchedOrder = result.val;
-      console.dir({ matchedOrder }, { depth: null });
+      const {
+        val: { orderWithAction, secret },
+      } = result;
+      console.dir({ matchedOrder: orderWithAction }, { depth: null });
       if (isEVM(fromAsset.chain) && garden.evmHTLC) {
         return garden.evmHTLC
-          .initiate(matchedOrder)
-          .then<Result<{ inboundTx: string; orderId: string }, string>>(
-            (inboundTxResult) => {
-              if (!inboundTxResult.ok) {
-                return inboundTxResult;
-              }
-              return {
-                ok: true,
-                val: {
-                  inboundTx: inboundTxResult.val,
-                  orderId: matchedOrder.create_order.create_id,
-                },
-              };
-            },
-          );
+          .initiate(orderWithAction)
+          .then((inboundTxResult) => {
+            if (!inboundTxResult.ok) {
+              return inboundTxResult;
+            }
+            return {
+              ok: true,
+              val: {
+                inboundTx: inboundTxResult.val,
+                orderId: orderWithAction.create_order.create_id,
+                secret,
+              },
+            };
+          });
       }
       return {
         ok: true,
         val: {
-          depositAddress: matchedOrder.source_swap.swap_id,
-          orderId: matchedOrder.create_order.create_id,
+          depositAddress: orderWithAction.source_swap.swap_id,
+          orderId: orderWithAction.create_order.create_id,
+          secret,
         },
       };
     })
-    .then<Result<OrderWithAction, string>>((result) => {
-      if (!result.ok) {
-        return { error: result.error, ok: false };
-      }
-      if ('inboundTx' in result.val) {
-        console.log({ inboundTx: result.val.inboundTx });
-      }
-      return pollOrder({
-        filter: (orderWithStatus) => {
-          return (
-            ((orderWithStatus.action === OrderActions.Redeem ||
-              orderWithStatus.action === OrderActions.Refund) && {
-              ok: true,
-              val: orderWithStatus,
-            }) ||
-            null
-          );
-        },
-        orderId: result.val.orderId,
-      });
-    })
+    .then<Result<{ orderWithAction: OrderWithAction; secret: string }, string>>(
+      (result) => {
+        if (!result.ok) {
+          return { error: result.error, ok: false };
+        }
+        if ('inboundTx' in result.val) {
+          console.log({ inboundTx: result.val.inboundTx });
+        }
+        return pollOrder({
+          attemptsThreshold: 360,
+          filter: (orderWithStatus) => {
+            return (
+              ((orderWithStatus.action === OrderActions.Redeem ||
+                orderWithStatus.action === OrderActions.Refund) && {
+                ok: true,
+                val: orderWithStatus,
+              }) ||
+              null
+            );
+          },
+          intervalMs: 5000,
+          orderId: result.val.orderId,
+        }).then((orderWithActionResult) => {
+          if (!orderWithActionResult.ok) {
+            return orderWithActionResult;
+          }
+          return {
+            ok: true,
+            val: {
+              orderWithAction: orderWithActionResult.val,
+              secret: result.val.secret,
+            },
+          };
+        });
+      },
+    )
     .catch<Err<string>>(() => {
       return { error: 'Unexpected error occurred', ok: false };
     })
