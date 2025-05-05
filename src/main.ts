@@ -1,9 +1,4 @@
-import {
-  Garden,
-  Quote,
-  type OrderActions,
-  type SwapParams,
-} from '@gardenfi/core';
+import { Garden, OrderActions, Quote, type SwapParams } from '@gardenfi/core';
 import { Environment, type Err, type Ok, type Result } from '@gardenfi/utils';
 import {
   type Asset,
@@ -14,7 +9,7 @@ import {
 import { api, digestKey, fromAsset, toAsset } from './utils';
 import { evmWalletClient } from './evm';
 import { swap } from './swap';
-import { pollMatchedOrder } from './orderbook';
+import { pollOrder, type OrderWithAction } from './orderbook';
 
 // #region env
 const amountUnit = Number.parseFloat(process.env.AMOUNT_UNIT ?? '');
@@ -101,15 +96,23 @@ export const fetchQuote = (props: {
         evmAddress: evmWalletClient.account.address,
       });
     })
-    .then<Result<MatchedOrder, string>>((orderIdResult) => {
+    .then<Result<OrderWithAction, string>>((orderIdResult) => {
       if (!orderIdResult.ok) {
         return { error: orderIdResult.error, ok: false };
       }
-      return pollMatchedOrder({ orderId: orderIdResult.val });
+      return pollOrder({ orderId: orderIdResult.val });
     })
     .then<Result<{ depositAddress: string } | string, string>>((result) => {
       if (!result.ok) {
         return { error: result.error, ok: false };
+      }
+      if (result.val.action !== OrderActions.Initiate) {
+        return {
+          error:
+            'Expected order action to be initiate, received: ' +
+            result.val.action,
+          ok: false,
+        };
       }
       const matchedOrder = result.val;
       console.dir({ matchedOrder }, { depth: null });
