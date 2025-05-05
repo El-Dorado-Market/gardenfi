@@ -1,6 +1,6 @@
 import { Environment, Url, type Result } from '@gardenfi/utils';
 import { api } from './utils';
-import { Orderbook, type MatchedOrder } from '@gardenfi/orderbook';
+import { Orderbook, type Chain, type MatchedOrder } from '@gardenfi/orderbook';
 import {
   BlockNumberFetcher,
   type OrderActions,
@@ -8,6 +8,9 @@ import {
   ParseOrderStatus,
 } from '@gardenfi/core';
 
+export type BlockNumbers = {
+  [key in Chain]: number;
+};
 export const fetchBlockNumbers = () => {
   return new BlockNumberFetcher(
     api.info,
@@ -16,35 +19,32 @@ export const fetchBlockNumbers = () => {
 };
 
 export const getOrderAction = ({
+  blockNumbers,
   order,
 }: {
+  blockNumbers: BlockNumbers;
   order: MatchedOrder;
-}): Promise<OrderActions> => {
-  return fetchBlockNumbers().then((blockNumbers) => {
-    const sourceChain = order.source_swap.chain;
-    const sourceChainBlockNumber = blockNumbers.val[sourceChain];
+}): OrderActions => {
+  const sourceChain = order.source_swap.chain;
+  const sourceChainBlockNumber = blockNumbers[sourceChain];
 
-    const destinationChain = order.destination_swap.chain;
-    const destinationChainBlockNumber = blockNumbers.val[destinationChain];
+  const destinationChain = order.destination_swap.chain;
+  const destinationChainBlockNumber = blockNumbers[destinationChain];
 
-    const status = ParseOrderStatus(
-      order,
-      sourceChainBlockNumber,
-      destinationChainBlockNumber,
-    );
-    return parseActionFromStatus(status);
-  });
+  const status = ParseOrderStatus(
+    order,
+    sourceChainBlockNumber,
+    destinationChainBlockNumber,
+  );
+  return parseActionFromStatus(status);
 };
 
-export const getOrderWithAction = (
-  order: MatchedOrder,
-): Promise<Result<OrderWithAction, string>> => {
-  return getOrderAction({ order }).then((action) => {
-    return {
-      ok: true,
-      val: { ...order, action },
-    };
-  });
+export const getOrderWithAction = ({
+  blockNumbers,
+  order,
+}: { blockNumbers: BlockNumbers; order: MatchedOrder }): OrderWithAction => {
+  const action = getOrderAction({ blockNumbers, order });
+  return { ...order, action };
 };
 
 export const getMatchedOrder = ({
@@ -73,27 +73,35 @@ export type OrderWithAction = MatchedOrder & { action: OrderActions };
 export const pollOrder = ({
   attempt = 0,
   attemptsThreshold = 10,
+  filter,
   intervalMs = 1000,
   orderId,
 }: {
   attempt?: number;
   attemptsThreshold?: number;
+  filter: (order: OrderWithAction) => null | Result<OrderWithAction, string>;
   intervalMs?: number;
   orderId: string;
 }): Promise<Result<OrderWithAction, string>> => {
   if (attempt >= attemptsThreshold) {
     return Promise.resolve({ error: 'Exceeded attempt threshold', ok: false });
   }
-  return getMatchedOrder({ orderId: orderId })
-    .then((matchedOrderResult) => {
-      if (matchedOrderResult.ok) {
-        return getOrderWithAction(matchedOrderResult.val);
-      }
-      return matchedOrderResult;
-    })
-    .then<Result<OrderWithAction, string>>((matchedOrderResult) => {
-      if (matchedOrderResult.ok) {
-        return matchedOrderResult;
+  return Promise.all([
+    getMatchedOrder({ orderId: orderId }),
+    fetchBlockNumbers(),
+  ]).then<Result<OrderWithAction, string>>(
+    ([orderWithStatusResult, blockNumbersResult]) => {
+      const filteredOrderResult =
+        orderWithStatusResult.ok &&
+        blockNumbersResult.val &&
+        filter(
+          getOrderWithAction({
+            blockNumbers: blockNumbersResult.val,
+            order: orderWithStatusResult.val,
+          }),
+        );
+      if (filteredOrderResult) {
+        return filteredOrderResult;
       }
       return new Promise<Result<OrderWithAction, string>>((resolve) => {
         setTimeout(() => {
@@ -101,11 +109,13 @@ export const pollOrder = ({
             pollOrder({
               attempt: attempt + 1,
               attemptsThreshold,
+              filter: filter,
               intervalMs,
               orderId,
             }),
           );
         }, intervalMs);
       });
-    });
+    },
+  );
 };

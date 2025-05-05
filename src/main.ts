@@ -1,11 +1,6 @@
 import { Garden, OrderActions, Quote, type SwapParams } from '@gardenfi/core';
-import { Environment, type Err, type Ok, type Result } from '@gardenfi/utils';
-import {
-  type Asset,
-  type Chain,
-  isEVM,
-  type MatchedOrder,
-} from '@gardenfi/orderbook';
+import { Environment, type Err, type Result } from '@gardenfi/utils';
+import { type Asset, type Chain, isEVM } from '@gardenfi/orderbook';
 import { api, digestKey, fromAsset, toAsset } from './utils';
 import { evmWalletClient } from './evm';
 import { swap } from './swap';
@@ -100,67 +95,80 @@ export const fetchQuote = (props: {
       if (!orderIdResult.ok) {
         return { error: orderIdResult.error, ok: false };
       }
-      return pollOrder({ orderId: orderIdResult.val });
+      return pollOrder({
+        filter: (orderWithStatus) => {
+          return (
+            (orderWithStatus.action === OrderActions.Initiate && {
+              ok: true,
+              val: orderWithStatus,
+            }) || {
+              error:
+                'Expected order action to be initiate, received: ' +
+                orderWithStatus.action,
+              ok: false,
+            }
+          );
+        },
+        orderId: orderIdResult.val,
+      });
     })
-    .then<Result<{ depositAddress: string } | string, string>>((result) => {
+    .then<
+      Result<
+        | { depositAddress: string; orderId: string }
+        | { inboundTx: string; orderId: string },
+        string
+      >
+    >((result) => {
       if (!result.ok) {
         return { error: result.error, ok: false };
-      }
-      if (result.val.action !== OrderActions.Initiate) {
-        return {
-          error:
-            'Expected order action to be initiate, received: ' +
-            result.val.action,
-          ok: false,
-        };
       }
       const matchedOrder = result.val;
       console.dir({ matchedOrder }, { depth: null });
       if (isEVM(fromAsset.chain) && garden.evmHTLC) {
-        return garden.evmHTLC.initiate(matchedOrder);
-      }
-      const withDepositAddress = {
-        depositAddress: matchedOrder.source_swap.swap_id,
-      };
-      return { ok: true, val: withDepositAddress };
-    })
-    .then<
-      Result<
-        | { depositAddress: string }
-        | { orderAction: OrderActions; outboundTx: string },
-        string
-      >
-    >((initResult) => {
-      if (!initResult.ok) {
-        return { error: initResult.error, ok: false };
-      }
-      if (typeof initResult.val === 'string') {
-        const inboundTx = initResult.val;
-        console.log({ inboundTx });
-      }
-      return props.garden.execute().then((unsubscribe) => {
-        return Promise.any([
-          new Promise<Err<string>>((resolve) => {
-            const onError = (_: MatchedOrder, error: string) => {
-              unsubscribe();
-              resolve({ error, ok: false });
-            };
-            props.garden.on('error', onError);
-          }),
-          new Promise<Ok<{ orderAction: OrderActions; outboundTx: string }>>(
-            (resolve) => {
-              const onSuccess = (
-                _: MatchedOrder,
-                orderAction: OrderActions,
-                outboundTx: string,
-              ) => {
-                unsubscribe();
-                resolve({ ok: true, val: { orderAction, outboundTx } });
+        return garden.evmHTLC
+          .initiate(matchedOrder)
+          .then<Result<{ inboundTx: string; orderId: string }, string>>(
+            (inboundTxResult) => {
+              if (!inboundTxResult.ok) {
+                return inboundTxResult;
+              }
+              return {
+                ok: true,
+                val: {
+                  inboundTx: inboundTxResult.val,
+                  orderId: matchedOrder.create_order.create_id,
+                },
               };
-              props.garden.on('success', onSuccess);
             },
-          ),
-        ]);
+          );
+      }
+      return {
+        ok: true,
+        val: {
+          depositAddress: matchedOrder.source_swap.swap_id,
+          orderId: matchedOrder.create_order.create_id,
+        },
+      };
+    })
+    .then<Result<OrderWithAction, string>>((result) => {
+      if (!result.ok) {
+        return { error: result.error, ok: false };
+      }
+      if ('inboundTx' in result.val) {
+        console.log({ inboundTx: result.val.inboundTx });
+      }
+      return pollOrder({
+        filter: (orderWithStatus) => {
+          return (
+            ((orderWithStatus.action === OrderActions.Redeem ||
+              orderWithStatus.action === OrderActions.Refund) && {
+              ok: true,
+              val: orderWithStatus,
+            }) ||
+            null
+          );
+        },
+        orderId: result.val.orderId,
       });
     })
     .catch<Err<string>>(() => {
