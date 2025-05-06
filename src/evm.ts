@@ -87,18 +87,6 @@ export const evmRedeem = ({
     });
 };
 
-export const getOrderId = ({
-  initiatorAddress,
-  secretHash,
-}: { initiatorAddress: Address; secretHash: Hex }) => {
-  return sha256(
-    encodeAbiParameters(parseAbiParameters(['bytes32', 'address']), [
-      secretHash,
-      initiatorAddress,
-    ]),
-  );
-};
-
 export const evmRefund = ({
   contractAddress,
   initiatorAddress,
@@ -141,4 +129,23 @@ export const evmRefund = ({
         val: refundTx,
       };
     });
+};
+
+export type EvmTransaction = {
+  from: string;
+  data: string;
+  to: string;
+  value: string;
+};
+
+export const getOrderId = ({
+  initiatorAddress,
+  secretHash,
+}: { initiatorAddress: Address; secretHash: Hex }) => {
+  return sha256(
+    encodeAbiParameters(parseAbiParameters(['bytes32', 'address']), [
+      secretHash,
+      initiatorAddress,
+    ]),
+  );
 };
