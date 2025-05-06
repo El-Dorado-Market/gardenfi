@@ -15,11 +15,17 @@ import type { Result } from '@gardenfi/utils';
 import { auth } from './auth';
 import { getBtcAddress } from './btc';
 import { orderbook } from './orderbook';
+import { createRedeemTx, createRefundTx, type EvmTransaction } from './evm';
 
 export type SwapProps = SwapParams & { evmAddress: string };
 export const swap = (
   props: SwapProps,
-): Promise<Result<{ orderId: string; secret: string }, string>> => {
+): Promise<
+  Result<
+    { orderId: string; redeemTx: EvmTransaction; refundTx: EvmTransaction },
+    string
+  >
+> => {
   const validatedProps = validateProps(props);
   if (!validatedProps.ok) {
     return Promise.resolve({ error: validatedProps.error, ok: false });
@@ -97,7 +103,16 @@ export const swap = (
         };
       });
     })
-    .then<Result<{ orderId: string; secret: string }, string>>((result) => {
+    .then<
+      Result<
+        {
+          orderId: string;
+          redeemTx: EvmTransaction;
+          refundTx: EvmTransaction;
+        },
+        string
+      >
+    >((result) => {
       if (!result.ok) {
         return { error: result.error, ok: false };
       }
@@ -108,12 +123,26 @@ export const swap = (
         orderbook.createOrder(attestedQuote, auth) as Promise<
           Result<string, string>
         >
-      ).then((orderIdResult) => {
-        if (!orderIdResult.ok) {
-          return orderIdResult;
+      ).then((result) => {
+        if (!result.ok) {
+          return result;
         }
-        const { val: orderId } = orderIdResult;
-        return { ok: true, val: { orderId, secret } };
+        const { val: orderId } = result;
+        return {
+          ok: true,
+          val: {
+            orderId,
+            redeemTx: createRedeemTx({
+              contractAddress: attestedQuote.destination_asset,
+              orderId,
+              secret,
+            }),
+            refundTx: createRefundTx({
+              contractAddress: attestedQuote.source_asset,
+              orderId,
+            }),
+          },
+        };
       });
     });
 };

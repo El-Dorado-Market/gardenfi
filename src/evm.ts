@@ -7,13 +7,12 @@ import {
   type Chain as ViemChain,
   createWalletClient,
   encodeAbiParameters,
-  getContract,
+  encodeFunctionData,
   http,
-  isHex,
   parseAbiParameters,
   sha256,
 } from 'viem';
-import { with0x, type Result } from '@gardenfi/utils';
+import { with0x } from '@gardenfi/utils';
 import { AtomicSwapABI } from './AtomicSwapABI';
 
 const evmRpcUrl = process.env.EVM_RPC_URL;
@@ -46,89 +45,46 @@ export const evmWalletClient = createWalletClient({
   transport: http(evmRpcUrl),
 });
 
-export const evmRedeem = ({
+export const createRedeemTx = ({
   contractAddress,
-  initiatorAddress,
+  orderId,
   secret,
 }: {
   contractAddress: string;
-  initiatorAddress: string;
+  orderId: string;
   secret: string;
-}): Promise<Result<string, string>> => {
-  if (!isHex(contractAddress)) {
-    return Promise.resolve({
-      error: 'Invalid contract address: ' + contractAddress,
-      ok: false,
-    });
-  }
-  if (!isHex(initiatorAddress)) {
-    return Promise.resolve({
-      error: 'Invalid initiator address: ' + initiatorAddress,
-      ok: false,
-    });
-  }
-  const secretWith0x = with0x(secret);
-  const secretHash = sha256(secretWith0x);
-  const orderId = getOrderId({
-    initiatorAddress: initiatorAddress,
-    secretHash,
-  });
-  const contract = getContract({
-    address: contractAddress,
+}): EvmTransaction => {
+  const data = encodeFunctionData({
     abi: AtomicSwapABI,
-    client: evmWalletClient,
+    functionName: 'redeem',
+    args: [with0x(orderId), with0x(secret)],
   });
-  return contract.write
-    .redeem([orderId, secretWith0x], {
-      account,
-    })
-    .then((outboundTx) => {
-      return { ok: true, val: outboundTx };
-    });
+  return {
+    from: evmWalletClient.account.address,
+    data,
+    to: with0x(contractAddress),
+    value: with0x('0'),
+  };
 };
 
-export const evmRefund = ({
+export const createRefundTx = ({
   contractAddress,
-  initiatorAddress,
-  secret,
+  orderId,
 }: {
   contractAddress: string;
-  initiatorAddress: string;
-  secret: string;
-}): Promise<Result<string, string>> => {
-  if (!isHex(contractAddress)) {
-    return Promise.resolve({
-      error: 'Invalid contract address: ' + contractAddress,
-      ok: false,
-    });
-  }
-  if (!isHex(initiatorAddress)) {
-    return Promise.resolve({
-      error: 'Invalid initiator address: ' + initiatorAddress,
-      ok: false,
-    });
-  }
-  const secretWith0x = with0x(secret);
-  const secretHash = sha256(secretWith0x);
-  const orderId = getOrderId({ initiatorAddress, secretHash });
-
-  const contract = getContract({
-    address: contractAddress,
+  orderId: string;
+}): EvmTransaction => {
+  const data = encodeFunctionData({
     abi: AtomicSwapABI,
-    client: evmWalletClient,
+    functionName: 'refund',
+    args: [with0x(orderId)],
   });
-
-  return contract.write
-    .refund([orderId], {
-      account: initiatorAddress,
-      chain: undefined,
-    })
-    .then((refundTx) => {
-      return {
-        ok: true,
-        val: refundTx,
-      };
-    });
+  return {
+    data,
+    from: evmWalletClient.account.address,
+    to: with0x(contractAddress),
+    value: with0x('0'),
+  };
 };
 
 export type EvmTransaction = {

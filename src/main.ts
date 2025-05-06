@@ -2,9 +2,10 @@ import { Garden, OrderActions, Quote, type SwapParams } from '@gardenfi/core';
 import { Environment, type Err, type Result } from '@gardenfi/utils';
 import { type Asset, type Chain, isEVM } from '@gardenfi/orderbook';
 import { api, digestKey, fromAsset, toAsset } from './utils';
-import { evmRedeem, evmRefund, evmWalletClient } from './evm';
+import { evmWalletClient, type EvmTransaction } from './evm';
 import { swap } from './swap';
 import { pollOrder, type OrderWithAction } from './orderbook';
+import { isHex } from 'viem';
 
 // #region env
 const amountUnit = Number.parseFloat(process.env.AMOUNT_UNIT ?? '');
@@ -66,7 +67,12 @@ export const fetchQuote = (props: {
   );
   return new Quote(api.quote)
     .getQuote(orderPair, sendAmount, false)
-    .then<Result<{ orderId: string; secret: string }, string>>((result) => {
+    .then<
+      Result<
+        { orderId: string; redeemTx: EvmTransaction; refundTx: EvmTransaction },
+        string
+      >
+    >((result) => {
       if (result.error) {
         return { error: result.error, ok: false };
       }
@@ -91,43 +97,13 @@ export const fetchQuote = (props: {
         evmAddress: evmWalletClient.account.address,
       });
     })
-    .then<Result<{ orderWithAction: OrderWithAction; secret: string }, string>>(
-      (result) => {
-        if (!result.ok) {
-          return { error: result.error, ok: false };
-        }
-        return pollOrder({
-          filter: ({ action, ...order }) => {
-            return (
-              (action === OrderActions.Initiate && {
-                ok: true,
-                val: { ...order, action },
-              }) || {
-                error:
-                  'Expected order action to be initiate, received: ' + action,
-                ok: false,
-              }
-            );
-          },
-          orderId: result.val.orderId,
-        }).then((orderWithActionResult) => {
-          if (!orderWithActionResult.ok) {
-            return orderWithActionResult;
-          }
-          return {
-            ok: true,
-            val: {
-              orderWithAction: orderWithActionResult.val,
-              secret: result.val.secret,
-            },
-          };
-        });
-      },
-    )
     .then<
       Result<
-        | { depositAddress: string; orderId: string; secret: string }
-        | { inboundTx: string; orderId: string; secret: string },
+        {
+          orderWithAction: OrderWithAction;
+          redeemTx: EvmTransaction;
+          refundTx: EvmTransaction;
+        },
         string
       >
     >((result) => {
@@ -135,7 +111,58 @@ export const fetchQuote = (props: {
         return { error: result.error, ok: false };
       }
       const {
-        val: { orderWithAction, secret },
+        val: { orderId, redeemTx, refundTx },
+      } = result;
+      return pollOrder({
+        filter: ({ action, ...order }) => {
+          return (
+            (action === OrderActions.Initiate && {
+              ok: true,
+              val: { ...order, action },
+            }) || {
+              error:
+                'Expected order action to be initiate, received: ' + action,
+              ok: false,
+            }
+          );
+        },
+        orderId,
+      }).then((orderWithActionResult) => {
+        if (!orderWithActionResult.ok) {
+          return orderWithActionResult;
+        }
+        return {
+          ok: true,
+          val: {
+            orderWithAction: orderWithActionResult.val,
+            redeemTx,
+            refundTx,
+          },
+        };
+      });
+    })
+    .then<
+      Result<
+        | {
+            depositAddress: string;
+            orderId: string;
+            redeemTx: EvmTransaction;
+            refundTx: EvmTransaction;
+          }
+        | {
+            inboundTx: string;
+            orderId: string;
+            redeemTx: EvmTransaction;
+            refundTx: EvmTransaction;
+          },
+        string
+      >
+    >((result) => {
+      if (!result.ok) {
+        return { error: result.error, ok: false };
+      }
+      const {
+        val: { orderWithAction, redeemTx, refundTx },
       } = result;
       console.dir({ matchedOrder: orderWithAction }, { depth: null });
       if (isEVM(fromAsset.chain) && garden.evmHTLC) {
@@ -150,7 +177,8 @@ export const fetchQuote = (props: {
               val: {
                 inboundTx: inboundTxResult.val,
                 orderId: orderWithAction.create_order.create_id,
-                secret,
+                redeemTx,
+                refundTx,
               },
             };
           });
@@ -160,17 +188,17 @@ export const fetchQuote = (props: {
         val: {
           depositAddress: orderWithAction.source_swap.swap_id,
           orderId: orderWithAction.create_order.create_id,
-          secret,
+          redeemTx,
+          refundTx,
         },
       };
     })
     .then<
       Result<
         {
-          orderWithAction: OrderWithAction<
-            OrderActions.Redeem | OrderActions.Refund
-          >;
-          secret: string;
+          orderWithAction: OrderWithAction;
+          redeemTx: EvmTransaction;
+          refundTx: EvmTransaction;
         },
         string
       >
@@ -181,6 +209,9 @@ export const fetchQuote = (props: {
       if ('inboundTx' in result.val) {
         console.log({ inboundTx: result.val.inboundTx });
       }
+      const {
+        val: { orderId, redeemTx, refundTx },
+      } = result;
       return pollOrder({
         attemptsThreshold: 360,
         filter: ({ action, ...order }) => {
@@ -194,7 +225,7 @@ export const fetchQuote = (props: {
           );
         },
         intervalMs: 5000,
-        orderId: result.val.orderId,
+        orderId,
       }).then((orderWithActionResult) => {
         if (!orderWithActionResult.ok) {
           return orderWithActionResult;
@@ -203,7 +234,8 @@ export const fetchQuote = (props: {
           ok: true,
           val: {
             orderWithAction: orderWithActionResult.val,
-            secret: result.val.secret,
+            redeemTx,
+            refundTx,
           },
         };
       });
@@ -217,26 +249,28 @@ export const fetchQuote = (props: {
         return;
       }
       const {
-        val: { orderWithAction, secret },
+        val: { orderWithAction, redeemTx, refundTx },
       } = result;
       if (
         isEVM(orderWithAction.destination_swap.chain) &&
-        orderWithAction.action === OrderActions.Redeem
+        orderWithAction.action === OrderActions.Redeem &&
+        isHex(redeemTx.data) &&
+        isHex(redeemTx.to)
       ) {
-        return evmRedeem({
-          contractAddress: orderWithAction.destination_swap.asset,
-          initiatorAddress: orderWithAction.destination_swap.initiator,
-          secret,
+        return evmWalletClient.sendTransaction({
+          data: redeemTx.data,
+          to: redeemTx.to,
         });
       }
       if (
-        isEVM(orderWithAction.destination_swap.chain) &&
-        orderWithAction.action === OrderActions.Refund
+        isEVM(orderWithAction.source_swap.chain) &&
+        orderWithAction.action === OrderActions.Refund &&
+        isHex(refundTx.data) &&
+        isHex(refundTx.to)
       ) {
-        return evmRefund({
-          contractAddress: orderWithAction.source_swap.asset,
-          initiatorAddress: orderWithAction.source_swap.initiator,
-          secret,
+        return evmWalletClient.sendTransaction({
+          data: refundTx.data,
+          to: refundTx.to,
         });
       }
     });
