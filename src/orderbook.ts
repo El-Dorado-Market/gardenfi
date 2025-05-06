@@ -68,9 +68,10 @@ export const getMatchedOrder = ({
 
 export const orderbook = new Orderbook(new Url(api.orderbook));
 
-export type OrderWithAction = MatchedOrder & { action: OrderActions };
+export type OrderWithAction<A extends OrderActions = OrderActions> =
+  MatchedOrder & { action: A };
 
-export const pollOrder = ({
+export const pollOrder = <A extends OrderActions>({
   attempt = 0,
   attemptsThreshold = 10,
   filter,
@@ -79,43 +80,41 @@ export const pollOrder = ({
 }: {
   attempt?: number;
   attemptsThreshold?: number;
-  filter: (order: OrderWithAction) => null | Result<OrderWithAction, string>;
+  filter: (order: OrderWithAction) => null | Result<OrderWithAction<A>, string>;
   intervalMs?: number;
   orderId: string;
-}): Promise<Result<OrderWithAction, string>> => {
+}): Promise<Result<OrderWithAction<A>, string>> => {
   if (attempt >= attemptsThreshold) {
     return Promise.resolve({ error: 'Exceeded attempt threshold', ok: false });
   }
   return Promise.all([
     getMatchedOrder({ orderId: orderId }),
     fetchBlockNumbers(),
-  ]).then<Result<OrderWithAction, string>>(
-    ([orderWithStatusResult, blockNumbersResult]) => {
-      const filteredOrderResult =
-        orderWithStatusResult.ok &&
-        blockNumbersResult.val &&
-        filter(
-          getOrderWithAction({
-            blockNumbers: blockNumbersResult.val,
-            order: orderWithStatusResult.val,
+  ]).then(([orderWithStatusResult, blockNumbersResult]) => {
+    const filteredOrderResult =
+      orderWithStatusResult.ok &&
+      blockNumbersResult.val &&
+      filter(
+        getOrderWithAction({
+          blockNumbers: blockNumbersResult.val,
+          order: orderWithStatusResult.val,
+        }),
+      );
+    if (filteredOrderResult) {
+      return filteredOrderResult;
+    }
+    return new Promise<Result<OrderWithAction<A>, string>>((resolve) => {
+      setTimeout(() => {
+        resolve(
+          pollOrder({
+            attempt: attempt + 1,
+            attemptsThreshold,
+            filter: filter,
+            intervalMs,
+            orderId,
           }),
         );
-      if (filteredOrderResult) {
-        return filteredOrderResult;
-      }
-      return new Promise<Result<OrderWithAction, string>>((resolve) => {
-        setTimeout(() => {
-          resolve(
-            pollOrder({
-              attempt: attempt + 1,
-              attemptsThreshold,
-              filter: filter,
-              intervalMs,
-              orderId,
-            }),
-          );
-        }, intervalMs);
-      });
-    },
-  );
+      }, intervalMs);
+    });
+  });
 };

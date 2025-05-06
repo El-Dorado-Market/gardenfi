@@ -99,7 +99,7 @@ export const getOrderId = ({
   );
 };
 
-export const refund = ({
+export const evmRefund = ({
   contractAddress,
   initiatorAddress,
   secret,
