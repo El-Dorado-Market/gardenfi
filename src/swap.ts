@@ -15,7 +15,11 @@ import type { Result } from '@gardenfi/utils';
 import { auth } from './auth';
 import { getBtcAddress } from './btc';
 import { orderbook } from './orderbook';
-import { createRedeemTx, createRefundTx, type EvmTransaction } from './evm';
+import {
+  createEvmRedeemTx,
+  createEvmRefundTx,
+  type EvmTransaction,
+} from './evm';
 
 export type SwapProps = SwapParams & { evmAddress: string };
 export const swap = (
@@ -132,14 +136,15 @@ export const swap = (
           ok: true,
           val: {
             orderId,
-            redeemTx: createRedeemTx({
+            redeemTx: createEvmRedeemTx({
               contractAddress: attestedQuote.destination_asset,
-              orderId,
+              initiatorAddress: attestedQuote.initiator_destination_address,
               secret,
             }),
-            refundTx: createRefundTx({
+            refundTx: createEvmRefundTx({
               contractAddress: attestedQuote.source_asset,
-              orderId,
+              initiatorAddress: attestedQuote.initiator_source_address,
+              secret,
             }),
           },
         };

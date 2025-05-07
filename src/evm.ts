@@ -45,19 +45,27 @@ export const evmWalletClient = createWalletClient({
   transport: http(evmRpcUrl),
 });
 
-export const createRedeemTx = ({
+export const createEvmRedeemTx = ({
   contractAddress,
-  orderId,
+  initiatorAddress,
   secret,
 }: {
   contractAddress: string;
-  orderId: string;
+  initiatorAddress: string;
   secret: string;
 }): EvmTransaction => {
+  const secretWith0x = with0x(secret);
+  const orderId = getOrderId({
+    initiatorAddress: with0x(initiatorAddress),
+    secret: secretWith0x,
+  });
+  console.log({
+    redeemOrderId: orderId,
+  });
   const data = encodeFunctionData({
     abi: AtomicSwapABI,
     functionName: 'redeem',
-    args: [with0x(orderId), with0x(secret)],
+    args: [orderId, secretWith0x],
   });
   return {
     from: evmWalletClient.account.address,
@@ -67,13 +75,22 @@ export const createRedeemTx = ({
   };
 };
 
-export const createRefundTx = ({
+export const createEvmRefundTx = ({
   contractAddress,
-  orderId,
+  initiatorAddress,
+  secret,
 }: {
   contractAddress: string;
-  orderId: string;
+  initiatorAddress: string;
+  secret: string;
 }): EvmTransaction => {
+  const orderId = getOrderId({
+    initiatorAddress: with0x(initiatorAddress),
+    secret: with0x(secret),
+  });
+  console.log({
+    refundOrderId: orderId,
+  });
   const data = encodeFunctionData({
     abi: AtomicSwapABI,
     functionName: 'refund',
@@ -96,8 +113,9 @@ export type EvmTransaction = {
 
 export const getOrderId = ({
   initiatorAddress,
-  secretHash,
-}: { initiatorAddress: Address; secretHash: Hex }) => {
+  secret,
+}: { initiatorAddress: Address; secret: Hex }) => {
+  const secretHash = sha256(secret);
   return sha256(
     encodeAbiParameters(parseAbiParameters(['bytes32', 'address']), [
       secretHash,

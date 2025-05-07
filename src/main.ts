@@ -240,7 +240,8 @@ export const fetchQuote = (props: {
         };
       });
     })
-    .catch<Err<string>>(() => {
+    .catch<Err<string>>((error) => {
+      console.dir({ error }, { depth: null });
       return { error: 'Unexpected error occurred', ok: false };
     })
     .then((result) => {
