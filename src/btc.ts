@@ -157,7 +157,7 @@ export const generateControlBlockFor = ({
   expiry,
   initiatorPubkey,
   internalPubkey,
-  leaf,
+  leafScript,
   network,
   redeemerPubkey,
   secretHash,
@@ -165,18 +165,11 @@ export const generateControlBlockFor = ({
   expiry: number;
   initiatorPubkey: string;
   internalPubkey: Buffer;
-  leaf: Leaf;
+  leafScript: Buffer;
   network: bitcoin.Network;
   redeemerPubkey: string;
   secretHash: string;
 }): Result<Buffer, string> => {
-  const leafScript: Buffer = getLeafScript({
-    expiry,
-    initiatorPubkey,
-    leaf,
-    redeemerPubkey,
-    secretHash,
-  });
   const payment = bitcoin.payments.p2tr({
     internalPubkey,
     network,
@@ -245,7 +238,7 @@ export const generateOutputScripts = ({
   address: string;
   count: number;
   network: bitcoin.Network;
-}): Buffer[] => {
+}): Array<Buffer> => {
   const outputScript = bitcoin.address.toOutputScript(address, network);
   const outputs: Buffer[] = [];
   for (let i = 0; i < count; i++) {
@@ -271,25 +264,10 @@ export const getBtcNetwork = () => {
  * Generates the hash of the leaf script
  */
 export const getLeafHash = ({
-  expiry,
-  initiatorPubkey,
-  leaf,
-  redeemerPubkey,
-  secretHash,
+  leafScript,
 }: {
-  expiry: number;
-  initiatorPubkey: string;
-  leaf: Leaf;
-  redeemerPubkey: string;
-  secretHash: string;
+  leafScript: Buffer;
 }): Buffer => {
-  const leafScript = getLeafScript({
-    expiry,
-    initiatorPubkey,
-    leaf,
-    redeemerPubkey,
-    secretHash,
-  });
   return bitcoin.crypto.taggedHash(
     'TapLeaf',
     Buffer.concat([Uint8Array.from([0xc0]), prefixScriptLength(leafScript)]),
@@ -324,26 +302,6 @@ export const getLeaves = ({
       },
     ],
   ];
-};
-
-export const getLeafScript = ({
-  expiry,
-  initiatorPubkey,
-  leaf,
-  redeemerPubkey,
-  secretHash,
-}: {
-  expiry: number;
-  initiatorPubkey: string;
-  leaf: Leaf;
-  redeemerPubkey: string;
-  secretHash: string;
-}): Buffer => {
-  return (
-    (leaf === Leaf.REDEEM && redeemLeaf({ redeemerPubkey, secretHash })) ||
-    (leaf === Leaf.REFUND && refundLeaf({ expiry, initiatorPubkey })) ||
-    instantRefundLeaf({ initiatorPubkey, redeemerPubkey })
-  );
 };
 
 export const instantRefundLeaf = ({

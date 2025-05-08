@@ -13,7 +13,6 @@ import {
   generateOutputScripts,
   getLeafHash,
   htlcErrors,
-  Leaf,
   refundLeaf,
 } from './btc';
 
@@ -94,11 +93,12 @@ export const createBtcRefundTx = ({
       if (blocksToExpiry > 0) {
         return { error: htlcErrors.htlcNotExpired(blocksToExpiry), ok: false };
       }
+      const leafScript = refundLeaf({ expiry, initiatorPubkey });
       const controlBlockResult = generateControlBlockFor({
         expiry,
         initiatorPubkey,
         internalPubkey,
-        leaf: Leaf.REFUND,
+        leafScript,
         network,
         redeemerPubkey,
         secretHash,
@@ -107,22 +107,16 @@ export const createBtcRefundTx = ({
         return controlBlockResult;
       }
       const { val: controlBlock } = controlBlockResult;
+      const hashType = bitcoin.Transaction.SIGHASH_DEFAULT;
+      const leafHash = getLeafHash({ leafScript });
       const outputScripts = generateOutputScripts({
         address,
         count: usedUtxos.length,
         network,
       });
-      const leafHash = getLeafHash({
-        expiry,
-        initiatorPubkey,
-        leaf: Leaf.REFUND,
-        redeemerPubkey,
-        secretHash,
-      });
       const values = usedUtxos.map((utxo) => {
         return utxo.value;
       });
-      const hashType = bitcoin.Transaction.SIGHASH_DEFAULT;
       return Promise.all(
         tx.ins.map((input, i) => {
           input.sequence = expiry;
