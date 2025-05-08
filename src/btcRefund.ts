@@ -1,97 +1,23 @@
-import * as varuint from 'varuint-bitcoin';
-import {
-  type BitcoinProvider,
-  type BitcoinUTXO,
-  type BitcoinWallet,
-  Urgency,
+import type {
+  BitcoinProvider,
+  BitcoinUTXO,
+  BitcoinWallet,
 } from '@catalogfi/wallets';
 import type { MatchedOrder } from '@gardenfi/orderbook';
 import * as bitcoin from 'bitcoinjs-lib';
-import type { Taptree } from 'bitcoinjs-lib/src/types';
-import * as ecc from 'tiny-secp256k1';
 import { toXOnly } from '@gardenfi/core';
 import type { Result } from '@gardenfi/utils';
-
-export const buildRawTx = ({
-  expiry,
-  fee,
-  initiatorPubkey,
-  internalPubkey,
-  network,
-  provider,
-  receiver,
-  redeemerPubkey,
-  secretHash,
-}: {
-  expiry: number;
-  fee?: number;
-  initiatorPubkey: string;
-  internalPubkey: Buffer;
-  network: bitcoin.Network;
-  provider: BitcoinProvider;
-  receiver: string;
-  redeemerPubkey: string;
-  secretHash: string;
-}): Promise<
-  Result<
-    { address: string; tx: bitcoin.Transaction; usedUtxos: Array<BitcoinUTXO> },
-    string
-  >
-> => {
-  const tx = new bitcoin.Transaction();
-  tx.version = 2;
-  const addressResult = generateAddress({
-    expiry,
-    initiatorPubkey,
-    internalPubkey,
-    network,
-    redeemerPubkey,
-    secretHash,
-  });
-  if (!addressResult.ok) {
-    return Promise.resolve(addressResult);
-  }
-  const { val: address } = addressResult;
-  return provider
-    .getUTXOs(address)
-    .then((utxos) => {
-      return utxos.reduce(
-        ({ balance, txWithInputs }, utxo) => {
-          txWithInputs.addInput(
-            Buffer.from(utxo.txid, 'hex').reverse(),
-            utxo.vout,
-          );
-          return {
-            balance: balance + utxo.value,
-            txWithInputs: txWithInputs,
-            utxos,
-          };
-        },
-        { balance: 0, txWithInputs: tx, utxos },
-      );
-    })
-    .then(({ balance, txWithInputs, utxos }) => {
-      if (fee) {
-        return { balance, fee, txWithInputs, utxos };
-      }
-      return provider
-        .suggestFee(address, balance, Urgency.MEDIUM)
-        .then((fee) => {
-          return { balance, fee, txWithInputs, utxos };
-        });
-    })
-    .then(({ balance, fee, txWithInputs, utxos }) => {
-      txWithInputs.addOutput(
-        bitcoin.address.toOutputScript(receiver, network),
-        balance - fee,
-      );
-
-      return { ok: true, val: { address, tx: txWithInputs, usedUtxos: utxos } };
-    });
-};
+import {
+  buildRawTx,
+  generateControlBlockFor,
+  generateOutputScripts,
+  getLeafHash,
+  htlcErrors,
+  Leaf,
+  refundLeaf,
+} from './btc';
 
 export const createBtcRefundTx = ({
-  fee,
   internalPubkey,
   network,
   order,
@@ -99,7 +25,6 @@ export const createBtcRefundTx = ({
   receiver,
   signer,
 }: {
-  fee?: number;
   internalPubkey: Buffer;
   network: bitcoin.Network;
   order: MatchedOrder;
@@ -110,13 +35,14 @@ export const createBtcRefundTx = ({
   receiver: string;
   signer: BitcoinWallet;
 }): Promise<Result<string, string>> => {
-  const expiry = order.source_swap.timelock;
-  const initiatorPubkey = toXOnly(order.source_swap.initiator);
-  const redeemerPubkey = toXOnly(order.source_swap.redeemer);
-  const secretHash = order.create_order.secret_hash;
+  const {
+    create_order: { secret_hash: secretHash },
+    source_swap: { initiator, redeemer, timelock: expiry },
+  } = order;
+  const initiatorPubkey = toXOnly(initiator);
+  const redeemerPubkey = toXOnly(redeemer);
   return buildRawTx({
     expiry,
-    fee,
     initiatorPubkey,
     internalPubkey,
     network,
@@ -181,11 +107,12 @@ export const createBtcRefundTx = ({
         return controlBlockResult;
       }
       const { val: controlBlock } = controlBlockResult;
-      const outputs = generateOutputs(
-        bitcoin.address.toOutputScript(address, network),
-        usedUtxos.length,
-      );
-      const refundLeafHash = leafHash({
+      const outputScripts = generateOutputScripts({
+        address,
+        count: usedUtxos.length,
+        network,
+      });
+      const leafHash = getLeafHash({
         expiry,
         initiatorPubkey,
         leaf: Leaf.REFUND,
@@ -201,10 +128,10 @@ export const createBtcRefundTx = ({
           input.sequence = expiry;
           const hash = tx.hashForWitnessV1(
             i,
-            outputs,
+            outputScripts,
             values,
             hashType,
-            refundLeafHash,
+            leafHash,
           );
           return signer.signSchnorr(hash).then((signature) => {
             tx.setWitness(i, [
@@ -240,255 +167,4 @@ export const getBlocksToExpiry = ({
       return Math.max(maxBlocksToExpiry, blocksToExpiry);
     }, 0);
   });
-};
-
-export const instantRefundLeaf = ({
-  initiatorPubkey,
-  redeemerPubkey,
-}: { initiatorPubkey: string; redeemerPubkey: string }): Buffer => {
-  return bitcoin.script.fromASM(
-    [
-      initiatorPubkey,
-      'OP_CHECKSIG',
-      redeemerPubkey,
-      'OP_CHECKSIGADD',
-      'OP_2',
-      'OP_NUMEQUAL',
-    ].join(' '),
-  );
-};
-
-export const getLeaves = ({
-  expiry,
-  initiatorPubkey,
-  redeemerPubkey,
-  secretHash,
-}: {
-  expiry: number;
-  initiatorPubkey: string;
-  redeemerPubkey: string;
-  secretHash: string;
-}): Taptree => {
-  return [
-    // most probable leaf (redeem)
-    {
-      version: LEAF_VERSION,
-      output: redeemLeaf({ redeemerPubkey, secretHash }),
-    },
-    [
-      {
-        version: LEAF_VERSION,
-        output: refundLeaf({ expiry, initiatorPubkey }),
-      },
-      {
-        version: LEAF_VERSION,
-        output: instantRefundLeaf({ initiatorPubkey, redeemerPubkey }),
-      },
-    ],
-  ];
-};
-
-/**
- * order.source_swap.swap_id
- */
-export const generateAddress = ({
-  expiry,
-  initiatorPubkey,
-  internalPubkey,
-  network,
-  redeemerPubkey,
-  secretHash,
-}: {
-  expiry: number;
-  initiatorPubkey: string;
-  internalPubkey: Buffer;
-  network: bitcoin.Network;
-  redeemerPubkey: string;
-  secretHash: string;
-}): Result<string, string> => {
-  const payment = bitcoin.payments.p2tr({
-    internalPubkey,
-    network,
-    scriptTree: getLeaves({
-      expiry,
-      initiatorPubkey,
-      redeemerPubkey,
-      secretHash,
-    }),
-  });
-  if (!payment.address) {
-    return { error: htlcErrors.htlcAddressGenerationFailed, ok: false };
-  }
-  return { ok: true, val: payment.address };
-};
-
-export const generateControlBlockFor = ({
-  expiry,
-  initiatorPubkey,
-  internalPubkey,
-  leaf,
-  network,
-  redeemerPubkey,
-  secretHash,
-}: {
-  expiry: number;
-  initiatorPubkey: string;
-  internalPubkey: Buffer;
-  leaf: Leaf;
-  network: bitcoin.Network;
-  redeemerPubkey: string;
-  secretHash: string;
-}): Result<Buffer, string> => {
-  const redeemScript: Buffer =
-    (leaf === Leaf.REDEEM && redeemLeaf({ redeemerPubkey, secretHash })) ||
-    (leaf === Leaf.REFUND && refundLeaf({ expiry, initiatorPubkey })) ||
-    instantRefundLeaf({ initiatorPubkey, redeemerPubkey });
-  const payment = bitcoin.payments.p2tr({
-    internalPubkey,
-    network,
-    scriptTree: getLeaves({
-      expiry,
-      initiatorPubkey,
-      redeemerPubkey,
-      secretHash,
-    }),
-    redeem: {
-      output: redeemScript,
-      redeemVersion: LEAF_VERSION,
-    },
-  });
-  const firstWitness = payment.witness?.at(-1);
-  if (!firstWitness) {
-    return { error: htlcErrors.controlBlockGenerationFailed, ok: false };
-  }
-  return { ok: true, val: firstWitness };
-};
-
-// #region bip341
-const errors = {
-  failedToCreateInternalPubkey: 'failed to create internal pubkey',
-  failedToTweakPubkey: 'failed to tweak pubkey',
-};
-const G_X = Buffer.from(
-  '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798',
-  'hex',
-);
-const G_Y = Buffer.from(
-  '483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8',
-  'hex',
-);
-const G = Buffer.concat([G_X, G_Y]);
-const H = Buffer.from(
-  '0250929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
-  'hex',
-);
-// #endregion
-export const generateInternalPubkey = (): Result<Buffer, string> => {
-  const hash = bitcoin.crypto.sha256(Buffer.from('GardenHTLC', 'utf-8'));
-  const R = ecc.pointMultiply(
-    Buffer.concat([Buffer.from('04', 'hex'), G]),
-    hash,
-  );
-  if (!R) {
-    return { error: errors.failedToCreateInternalPubkey, ok: false };
-  }
-  const internalPubKey = ecc.pointAdd(H, R);
-  if (!internalPubKey) {
-    return { error: errors.failedToCreateInternalPubkey, ok: false };
-  }
-  const pubkey = Buffer.from(internalPubKey);
-  return { ok: true, val: pubkey.subarray(1, 33) };
-};
-
-export const generateOutputs = (output: Buffer, count: number): Buffer[] => {
-  const outputs: Buffer[] = [];
-  for (let i = 0; i < count; i++) {
-    outputs.push(output);
-  }
-  return outputs;
-};
-
-export const htlcErrors = {
-  secretMismatch: 'invalid secret',
-  secretHashLenMismatch: 'secret hash should be 32 bytes',
-  pubkeyLenMismatch: 'pubkey should be 32 bytes',
-  zeroOrNegativeExpiry: 'expiry should be greater than 0',
-  htlcAddressGenerationFailed: 'failed to generate htlc address',
-  notFunded: 'address not funded',
-  noCounterpartySigs: 'counterparty signatures are required',
-  counterPartySigNotFound: (utxo: string) =>
-    'counterparty signature not found for utxo ' + utxo,
-  invalidCounterpartySigForUTXO: (utxo: string) =>
-    'invalid counterparty signature for utxo ' + utxo,
-  htlcNotExpired: (blocks: number) =>
-    `HTLC not expired, need more ${blocks} blocks`,
-  controlBlockGenerationFailed: 'failed to generate control block',
-  invalidLeaf: 'invalid leaf',
-};
-
-export enum Leaf {
-  REFUND = 0,
-  REDEEM = 1,
-  INSTANT_REFUND = 2,
-}
-export const LEAF_VERSION = 0xc0;
-export const leafHash = ({
-  expiry,
-  initiatorPubkey,
-  leaf,
-  redeemerPubkey,
-  secretHash,
-}: {
-  expiry: number;
-  initiatorPubkey: string;
-  leaf: Leaf;
-  redeemerPubkey: string;
-  secretHash: string;
-}): Buffer => {
-  const leafScript =
-    (leaf === Leaf.REFUND && refundLeaf({ expiry, initiatorPubkey })) ||
-    (leaf === Leaf.INSTANT_REFUND &&
-      instantRefundLeaf({ initiatorPubkey, redeemerPubkey })) ||
-    redeemLeaf({ redeemerPubkey, secretHash });
-  return bitcoin.crypto.taggedHash(
-    'TapLeaf',
-    Buffer.concat([Uint8Array.from([0xc0]), prefixScriptLength(leafScript)]),
-  );
-};
-
-export const prefixScriptLength = (s: Buffer): Buffer => {
-  const varintLen = varuint.encodingLength(s.length);
-  const buffer = Buffer.allocUnsafe(varintLen);
-  varuint.encode(s.length, buffer);
-  return Buffer.concat([buffer, s]);
-};
-
-export const redeemLeaf = ({
-  redeemerPubkey,
-  secretHash,
-}: { redeemerPubkey: string; secretHash: string }): Buffer => {
-  return bitcoin.script.fromASM(
-    [
-      'OP_SHA256',
-      secretHash,
-      'OP_EQUALVERIFY',
-      redeemerPubkey,
-      'OP_CHECKSIG',
-    ].join(' '),
-  );
-};
-
-export const refundLeaf = ({
-  expiry,
-  initiatorPubkey,
-}: { expiry: number; initiatorPubkey: string }): Buffer => {
-  return bitcoin.script.fromASM(
-    [
-      bitcoin.script.number.encode(expiry).toString('hex'),
-      'OP_CHECKSEQUENCEVERIFY',
-      'OP_DROP',
-      initiatorPubkey,
-      'OP_CHECKSIG',
-    ].join(' '),
-  );
 };
