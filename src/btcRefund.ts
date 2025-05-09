@@ -8,56 +8,76 @@ import * as bitcoin from 'bitcoinjs-lib';
 import { toXOnly } from '@gardenfi/core';
 import type { Result } from '@gardenfi/utils';
 import {
-  buildRawTx,
+  btcNetwork,
+  btcProvider,
+  btcWallet,
+  buildTx,
+  generateAddress,
   generateControlBlockFor,
+  generateInternalPubkey,
   generateOutputScripts,
+  getFee,
   getLeafHash,
   htlcErrors,
   refundLeaf,
+  type FeeRates,
 } from './btc';
 
 export const createBtcRefundTx = ({
-  internalPubkey,
-  network,
   order,
-  provider,
   receiver,
-  signer,
 }: {
-  internalPubkey: Buffer;
-  network: bitcoin.Network;
   order: MatchedOrder;
-  provider: BitcoinProvider;
   /**
    * order.create_order.additional_data.bitcoin_optional_recipient
    */
   receiver: string;
-  signer: BitcoinWallet;
 }): Promise<Result<string, string>> => {
+  const internalPubkeyResult = generateInternalPubkey();
+  if (!internalPubkeyResult.ok) {
+    return Promise.resolve(internalPubkeyResult);
+  }
+  const { val: internalPubkey } = internalPubkeyResult;
   const {
     create_order: { secret_hash: secretHash },
     source_swap: { initiator, redeemer, timelock: expiry },
   } = order;
   const initiatorPubkey = toXOnly(initiator);
+  const network = btcNetwork;
+  const provider = btcProvider;
   const redeemerPubkey = toXOnly(redeemer);
-  return buildRawTx({
+  const addressResult = generateAddress({
     expiry,
     initiatorPubkey,
     internalPubkey,
     network,
-    provider,
-    receiver,
     redeemerPubkey,
     secretHash,
-  })
+  });
+  if (!addressResult.ok) {
+    return Promise.resolve(addressResult);
+  }
+  const { val: address } = addressResult;
+  return provider
+    .getUTXOs(address)
+    .then<Result<{ address: string; utxos: Array<BitcoinUTXO> }, string>>(
+      (utxos) => {
+        return {
+          ok: true,
+          val: {
+            address,
+            utxos,
+          },
+        };
+      },
+    )
     .then<
       Result<
         {
           address: string;
           blocksToExpiry: number;
-          internalPubkey: Buffer;
-          tx: bitcoin.Transaction;
-          usedUtxos: Array<BitcoinUTXO>;
+          feeRates: FeeRates;
+          utxos: Array<BitcoinUTXO>;
         },
         string
       >
@@ -66,32 +86,35 @@ export const createBtcRefundTx = ({
         return result;
       }
       const {
-        val: { address, tx, usedUtxos },
+        val: { address, utxos },
       } = result;
-      return getBlocksToExpiry({ expiry, provider, utxos: usedUtxos }).then(
-        (blocksToExpiry) => {
-          return {
-            ok: true,
-            val: {
-              address,
-              blocksToExpiry,
-              internalPubkey,
-              tx,
-              usedUtxos,
-            },
-          };
-        },
-      );
+      return Promise.all([
+        getBlocksToExpiry({ expiry, provider, utxos }),
+        provider.getFeeRates(),
+      ]).then(([blocksToExpiry, feeRates]) => {
+        return {
+          ok: true,
+          val: {
+            address,
+            blocksToExpiry,
+            feeRates,
+            utxos,
+          },
+        };
+      });
     })
-    .then((result) => {
+    .then<Result<SignRefundTxProps, string>>((result) => {
       if (!result.ok) {
         return result;
       }
       const {
-        val: { address, blocksToExpiry, internalPubkey, tx, usedUtxos },
+        val: { address, blocksToExpiry, feeRates, utxos },
       } = result;
       if (blocksToExpiry > 0) {
-        return { error: htlcErrors.htlcNotExpired(blocksToExpiry), ok: false };
+        return {
+          error: htlcErrors.htlcNotExpired(blocksToExpiry),
+          ok: false,
+        };
       }
       const leafScript = refundLeaf({ expiry, initiatorPubkey });
       const controlBlockResult = generateControlBlockFor({
@@ -111,32 +134,57 @@ export const createBtcRefundTx = ({
       const leafHash = getLeafHash({ leafScript });
       const outputScripts = generateOutputScripts({
         address,
-        count: usedUtxos.length,
+        count: utxos.length,
         network,
       });
-      const values = usedUtxos.map((utxo) => {
+      const signer = btcWallet;
+      const tempTx = buildTx({
+        fee: 0,
+        network,
+        receiver,
+        utxos,
+        tx: new bitcoin.Transaction(),
+      });
+      const values = utxos.map((utxo) => {
         return utxo.value;
       });
-      return Promise.all(
-        tx.ins.map((input, i) => {
-          input.sequence = expiry;
-          const hash = tx.hashForWitnessV1(
-            i,
-            outputScripts,
-            values,
-            hashType,
-            leafHash,
-          );
-          return signer.signSchnorr(hash).then((signature) => {
-            tx.setWitness(i, [
-              signature,
-              refundLeaf({ expiry, initiatorPubkey }),
-              controlBlock,
-            ]);
-          });
-        }),
-      ).then(() => {
-        return { ok: true, val: tx.toHex() };
+      const signTxProps: SignRefundTxProps = {
+        controlBlock,
+        expiry,
+        hashType,
+        initiatorPubkey,
+        leafHash,
+        outputScripts,
+        signer,
+        tx: tempTx,
+        values,
+      };
+      return signRefundTx(signTxProps).then((tx) => {
+        return {
+          ok: true,
+          val: {
+            ...signTxProps,
+            tx: buildTx({
+              fee: getFee({ feeRates, vSize: tx.virtualSize() }),
+              network,
+              receiver,
+              utxos,
+              tx: new bitcoin.Transaction(),
+            }),
+          },
+        };
+      });
+    })
+    .then<Result<string, string>>((result) => {
+      if (!result.ok) {
+        return result;
+      }
+      const { val: signTxProps } = result;
+      return signRefundTx(signTxProps).then((tx) => {
+        return {
+          ok: true,
+          val: tx.toHex(),
+        };
       });
     });
 };
@@ -160,5 +208,50 @@ export const getBlocksToExpiry = ({
         currentBlockHeight;
       return Math.max(maxBlocksToExpiry, blocksToExpiry);
     }, 0);
+  });
+};
+
+export type SignRefundTxProps = {
+  controlBlock: Buffer;
+  expiry: number;
+  hashType: number;
+  initiatorPubkey: string;
+  leafHash: Buffer;
+  outputScripts: Array<Buffer>;
+  signer: BitcoinWallet;
+  tx: bitcoin.Transaction;
+  values: Array<number>;
+};
+export const signRefundTx = ({
+  controlBlock,
+  expiry,
+  hashType,
+  initiatorPubkey,
+  leafHash,
+  outputScripts,
+  signer,
+  tx,
+  values,
+}: SignRefundTxProps): Promise<bitcoin.Transaction> => {
+  return Promise.all(
+    tx.ins.map((input, i) => {
+      input.sequence = expiry;
+      const hash = tx.hashForWitnessV1(
+        i,
+        outputScripts,
+        values,
+        hashType,
+        leafHash,
+      );
+      return signer.signSchnorr(hash).then((signature) => {
+        tx.setWitness(i, [
+          signature,
+          refundLeaf({ expiry, initiatorPubkey }),
+          controlBlock,
+        ]);
+      });
+    }),
+  ).then(() => {
+    return tx;
   });
 };

@@ -5,7 +5,6 @@ import {
   BitcoinNetwork,
   BitcoinProvider,
   BitcoinWallet,
-  Urgency,
   type BitcoinUTXO,
 } from '@catalogfi/wallets';
 import { digestKey } from './utils';
@@ -14,88 +13,48 @@ import type { Result } from '@gardenfi/utils';
 import * as bitcoin from 'bitcoinjs-lib';
 import type { Taptree } from 'bitcoinjs-lib/src/types';
 
-export const provider = new BitcoinProvider(BitcoinNetwork.Mainnet);
+export const btcProvider = new BitcoinProvider(BitcoinNetwork.Mainnet);
 export const btcWallet = BitcoinWallet.fromPrivateKey(
   digestKey.digestKey,
-  provider,
+  btcProvider,
 );
 
-export const buildRawTx = ({
-  expiry,
-  fee,
-  initiatorPubkey,
-  internalPubkey,
-  network,
-  provider,
-  receiver,
-  redeemerPubkey,
-  secretHash,
-}: {
-  expiry: number;
-  fee?: number;
-  initiatorPubkey: string;
-  internalPubkey: Buffer;
-  network: bitcoin.Network;
-  provider: BitcoinProvider;
-  receiver: string;
-  redeemerPubkey: string;
-  secretHash: string;
-}): Promise<
-  Result<
-    { address: string; tx: bitcoin.Transaction; usedUtxos: Array<BitcoinUTXO> },
-    string
-  >
-> => {
-  const addressResult = generateAddress({
-    expiry,
-    initiatorPubkey,
-    internalPubkey,
-    network,
-    redeemerPubkey,
-    secretHash,
-  });
-  if (!addressResult.ok) {
-    return Promise.resolve(addressResult);
-  }
-  const { val: address } = addressResult;
-  return provider
-    .getUTXOs(address)
-    .then((utxos) => {
-      const tx = new bitcoin.Transaction();
-      tx.version = 2;
-      return utxos.reduce(
-        ({ balance, txWithInputs }, utxo) => {
-          txWithInputs.addInput(
-            Buffer.from(utxo.txid, 'hex').reverse(),
-            utxo.vout,
-          );
-          return {
-            balance: balance + utxo.value,
-            txWithInputs,
-            utxos,
-          };
-        },
-        { balance: 0, txWithInputs: tx, utxos },
-      );
-    })
-    .then(({ balance, txWithInputs, utxos }) => {
-      if (fee) {
-        return { balance, fee, txWithInputs, utxos };
-      }
-      return provider
-        .suggestFee(address, balance, Urgency.MEDIUM)
-        .then((fee) => {
-          return { balance, fee, txWithInputs, utxos };
-        });
-    })
-    .then(({ balance, fee, txWithInputs, utxos }) => {
-      txWithInputs.addOutput(
-        bitcoin.address.toOutputScript(receiver, network),
-        balance - fee,
-      );
+export const btcNetwork = bitcoin.networks.bitcoin;
 
-      return { ok: true, val: { address, tx: txWithInputs, usedUtxos: utxos } };
-    });
+export type BuildTxProps = {
+  fee: number;
+  network: bitcoin.Network;
+  receiver: string;
+  utxos: Array<BitcoinUTXO>;
+  tx: bitcoin.Transaction;
+};
+export const buildTx = ({
+  fee,
+  network,
+  receiver,
+  utxos,
+  tx,
+}: BuildTxProps): bitcoin.Transaction => {
+  tx.version = 2;
+  const balance = utxos.reduce((balance1, utxo) => {
+    tx.addInput(Buffer.from(utxo.txid, 'hex').reverse(), utxo.vout);
+    return balance1 + utxo.value;
+  }, 0);
+
+  tx.addOutput(
+    bitcoin.address.toOutputScript(receiver, network),
+    balance - fee,
+  );
+
+  return tx;
+};
+
+export type FeeRates = {
+  fastestFee: number;
+  halfHourFee: number;
+  hourFee: number;
+  economyFee: number;
+  minimumFee: number;
 };
 
 export const htlcErrors = {
@@ -256,8 +215,11 @@ export const getBtcAddress = (): Promise<Result<string, string>> => {
   });
 };
 
-export const getBtcNetwork = () => {
-  return bitcoin.networks.bitcoin;
+export const getFee = ({
+  feeRates,
+  vSize,
+}: { feeRates: FeeRates; vSize: number }) => {
+  return Math.ceil(feeRates.hourFee * vSize);
 };
 
 /**
@@ -270,7 +232,10 @@ export const getLeafHash = ({
 }): Buffer => {
   return bitcoin.crypto.taggedHash(
     'TapLeaf',
-    Buffer.concat([Uint8Array.from([0xc0]), prefixScriptLength(leafScript)]),
+    Buffer.concat([
+      Uint8Array.from([LEAF_VERSION]),
+      prefixScriptLength(leafScript),
+    ]),
   );
 };
 
@@ -335,12 +300,6 @@ export const isValidBitcoinPubKey = ({
   }
 };
 
-export enum Leaf {
-  REFUND = 0,
-  REDEEM = 1,
-  INSTANT_REFUND = 2,
-}
-
 export const LEAF_VERSION = 0xc0;
 
 export const redeemLeaf = ({
@@ -373,9 +332,9 @@ export const refundLeaf = ({
   );
 };
 
-export const prefixScriptLength = (s: Buffer): Buffer => {
-  const varintLen = varuint.encodingLength(s.length);
-  const buffer = Buffer.allocUnsafe(varintLen);
-  varuint.encode(s.length, buffer);
-  return Buffer.concat([buffer, s]);
+export const prefixScriptLength = (script: Buffer): Buffer => {
+  const varintLen = varuint.encodingLength(script.length);
+  const lengthBuffer = Buffer.allocUnsafe(varintLen);
+  varuint.encode(script.length, lengthBuffer);
+  return Buffer.concat([lengthBuffer, script]);
 };
