@@ -1,4 +1,3 @@
-import type { MatchedOrder } from '@gardenfi/orderbook';
 import type { Result } from '@gardenfi/utils';
 import * as bitcoin from 'bitcoinjs-lib';
 import {
@@ -21,27 +20,29 @@ import type { BitcoinUTXO, BitcoinWallet } from '@catalogfi/wallets';
 import { trim0x } from '@catalogfi/utils';
 
 export const createBtcRedeemTx = ({
-  order,
+  expiry,
+  initiatorAddress,
   receiver,
+  redeemerAddress,
   secret,
+  secretHash,
 }: {
-  order: MatchedOrder;
+  expiry: number;
+  initiatorAddress: string;
   receiver: string;
+  redeemerAddress: string;
   secret: string;
+  secretHash: string;
 }): Promise<Result<string, string>> => {
   const internalPubkeyResult = generateInternalPubkey();
   if (!internalPubkeyResult.ok) {
     return Promise.resolve(internalPubkeyResult);
   }
   const { val: internalPubkey } = internalPubkeyResult;
-  const {
-    create_order: { secret_hash: secretHash },
-    destination_swap: { initiator, redeemer, timelock: expiry },
-  } = order;
-  const initiatorPubkey = toXOnly(initiator);
+  const initiatorPubkey = toXOnly(initiatorAddress);
   const network = btcNetwork;
   const provider = btcProvider;
-  const redeemerPubkey = toXOnly(redeemer);
+  const redeemerPubkey = toXOnly(redeemerAddress);
   const addressResult = generateAddress({
     expiry,
     initiatorPubkey,

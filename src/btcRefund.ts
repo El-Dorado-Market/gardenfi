@@ -3,7 +3,6 @@ import type {
   BitcoinUTXO,
   BitcoinWallet,
 } from '@catalogfi/wallets';
-import type { MatchedOrder } from '@gardenfi/orderbook';
 import * as bitcoin from 'bitcoinjs-lib';
 import { toXOnly } from '@gardenfi/core';
 import type { Result } from '@gardenfi/utils';
@@ -24,28 +23,27 @@ import {
 } from './btc';
 
 export const createBtcRefundTx = ({
-  order,
+  expiry,
+  initiatorAddress,
   receiver,
+  redeemerAddress,
+  secretHash,
 }: {
-  order: MatchedOrder;
-  /**
-   * order.create_order.additional_data.bitcoin_optional_recipient
-   */
+  expiry: number;
+  initiatorAddress: string;
   receiver: string;
+  redeemerAddress: string;
+  secretHash: string;
 }): Promise<Result<string, string>> => {
   const internalPubkeyResult = generateInternalPubkey();
   if (!internalPubkeyResult.ok) {
     return Promise.resolve(internalPubkeyResult);
   }
   const { val: internalPubkey } = internalPubkeyResult;
-  const {
-    create_order: { secret_hash: secretHash },
-    source_swap: { initiator, redeemer, timelock: expiry },
-  } = order;
-  const initiatorPubkey = toXOnly(initiator);
+  const initiatorPubkey = toXOnly(initiatorAddress);
   const network = btcNetwork;
   const provider = btcProvider;
-  const redeemerPubkey = toXOnly(redeemer);
+  const redeemerPubkey = toXOnly(redeemerAddress);
   const addressResult = generateAddress({
     expiry,
     initiatorPubkey,
