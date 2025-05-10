@@ -49,15 +49,17 @@ export const createEvmRedeemTx = ({
   contractAddress,
   initiatorAddress,
   secret,
+  secretHash,
 }: {
   contractAddress: string;
   initiatorAddress: string;
   secret: string;
+  secretHash: string;
 }): EvmTransaction => {
   const secretWith0x = with0x(secret);
   const orderId = getOrderId({
     initiatorAddress: with0x(initiatorAddress),
-    secret: secretWith0x,
+    secretHash: with0x(secretHash),
   });
   console.log({
     redeemOrderId: orderId,
@@ -75,18 +77,21 @@ export const createEvmRedeemTx = ({
   };
 };
 
+/**
+ * EVM refund is automatically done by relay service
+ */
 export const createEvmRefundTx = ({
   contractAddress,
   initiatorAddress,
-  secret,
+  secretHash,
 }: {
   contractAddress: string;
   initiatorAddress: string;
-  secret: string;
+  secretHash: string;
 }): EvmTransaction => {
   const orderId = getOrderId({
     initiatorAddress: with0x(initiatorAddress),
-    secret: with0x(secret),
+    secretHash: with0x(secretHash),
   });
   console.log({
     refundOrderId: orderId,
@@ -113,9 +118,8 @@ export type EvmTransaction = {
 
 export const getOrderId = ({
   initiatorAddress,
-  secret,
-}: { initiatorAddress: Address; secret: Hex }) => {
-  const secretHash = sha256(secret);
+  secretHash,
+}: { initiatorAddress: Address; secretHash: Hex }) => {
   return sha256(
     encodeAbiParameters(parseAbiParameters(['bytes32', 'address']), [
       secretHash,

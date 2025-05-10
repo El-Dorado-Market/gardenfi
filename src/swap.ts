@@ -140,11 +140,12 @@ export const swap = (
               contractAddress: attestedQuote.destination_asset,
               initiatorAddress: attestedQuote.initiator_destination_address,
               secret,
+              secretHash: attestedQuote.secret_hash,
             }),
             refundTx: createEvmRefundTx({
               contractAddress: attestedQuote.source_asset,
               initiatorAddress: attestedQuote.initiator_source_address,
-              secret,
+              secretHash: attestedQuote.secret_hash,
             }),
           },
         };
