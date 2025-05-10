@@ -152,8 +152,8 @@ export const createBtcRefundTx = ({
         controlBlock,
         expiry,
         hashType,
-        initiatorPubkey,
         leafHash,
+        leafScript,
         outputScripts,
         signer,
         tx: tempTx,
@@ -215,8 +215,8 @@ export type SignRefundTxProps = {
   controlBlock: Buffer;
   expiry: number;
   hashType: number;
-  initiatorPubkey: string;
   leafHash: Buffer;
+  leafScript: Buffer;
   outputScripts: Array<Buffer>;
   signer: BitcoinWallet;
   tx: bitcoin.Transaction;
@@ -226,8 +226,8 @@ export const signRefundTx = ({
   controlBlock,
   expiry,
   hashType,
-  initiatorPubkey,
   leafHash,
+  leafScript,
   outputScripts,
   signer,
   tx,
@@ -244,11 +244,7 @@ export const signRefundTx = ({
         leafHash,
       );
       return signer.signSchnorr(hash).then((signature) => {
-        tx.setWitness(i, [
-          signature,
-          refundLeaf({ expiry, initiatorPubkey }),
-          controlBlock,
-        ]);
+        tx.setWitness(i, [signature, leafScript, controlBlock]);
       });
     }),
   ).then(() => {
