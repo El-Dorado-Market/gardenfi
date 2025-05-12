@@ -47,27 +47,20 @@ export const evmWalletClient = createWalletClient({
 
 export const createEvmRedeemTx = ({
   contractAddress,
-  initiatorAddress,
+  orderId,
   secret,
-  secretHash,
 }: {
   contractAddress: string;
-  initiatorAddress: string;
+  orderId: string;
   secret: string;
-  secretHash: string;
 }): EvmTransaction => {
-  const secretWith0x = with0x(secret);
-  const orderId = getOrderId({
-    initiatorAddress: with0x(initiatorAddress),
-    secretHash: with0x(secretHash),
-  });
   console.log({
     redeemOrderId: orderId,
   });
   const data = encodeFunctionData({
     abi: AtomicSwapABI,
     functionName: 'redeem',
-    args: [orderId, secretWith0x],
+    args: [with0x(orderId), with0x(secret)],
   });
   return {
     from: evmWalletClient.account.address,
@@ -82,17 +75,11 @@ export const createEvmRedeemTx = ({
  */
 export const createEvmRefundTx = ({
   contractAddress,
-  initiatorAddress,
-  secretHash,
+  orderId,
 }: {
   contractAddress: string;
-  initiatorAddress: string;
-  secretHash: string;
+  orderId: string;
 }): EvmTransaction => {
-  const orderId = getOrderId({
-    initiatorAddress: with0x(initiatorAddress),
-    secretHash: with0x(secretHash),
-  });
   console.log({
     refundOrderId: orderId,
   });
