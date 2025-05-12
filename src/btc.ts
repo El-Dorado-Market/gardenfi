@@ -79,29 +79,18 @@ export const htlcErrors = {
  * order.source_swap.swap_id
  */
 export const generateAddress = ({
-  expiry,
-  initiatorPubkey,
   internalPubkey,
   network,
-  redeemerPubkey,
-  secretHash,
+  scriptTree,
 }: {
-  expiry: number;
-  initiatorPubkey: string;
   internalPubkey: Buffer;
   network: bitcoin.Network;
-  redeemerPubkey: string;
-  secretHash: string;
+  scriptTree: Taptree;
 }): Result<string, string> => {
   const payment = bitcoin.payments.p2tr({
     internalPubkey,
     network,
-    scriptTree: getLeaves({
-      expiry,
-      initiatorPubkey,
-      redeemerPubkey,
-      secretHash,
-    }),
+    scriptTree,
   });
   if (!payment.address) {
     return { error: htlcErrors.htlcAddressGenerationFailed, ok: false };
@@ -113,31 +102,20 @@ export const generateAddress = ({
  * Given a leaf, generates the control block necessary for spending the leaf
  */
 export const generateControlBlockFor = ({
-  expiry,
-  initiatorPubkey,
   internalPubkey,
   leafScript,
   network,
-  redeemerPubkey,
-  secretHash,
+  scriptTree,
 }: {
-  expiry: number;
-  initiatorPubkey: string;
   internalPubkey: Buffer;
   leafScript: Buffer;
   network: bitcoin.Network;
-  redeemerPubkey: string;
-  secretHash: string;
+  scriptTree: Taptree;
 }): Result<Buffer, string> => {
   const payment = bitcoin.payments.p2tr({
     internalPubkey,
     network,
-    scriptTree: getLeaves({
-      expiry,
-      initiatorPubkey,
-      redeemerPubkey,
-      secretHash,
-    }),
+    scriptTree,
     redeem: {
       output: leafScript,
       redeemVersion: LEAF_VERSION,

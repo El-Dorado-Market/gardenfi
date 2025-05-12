@@ -11,6 +11,7 @@ import {
   generateOutputScripts,
   getFee,
   getLeafHash,
+  getLeaves,
   htlcErrors,
   redeemLeaf,
   type FeeRates,
@@ -18,6 +19,7 @@ import {
 import { toXOnly } from '@gardenfi/core';
 import type { BitcoinUTXO, BitcoinWallet } from '@catalogfi/wallets';
 import { trim0x } from '@catalogfi/utils';
+import type { Taptree } from 'bitcoinjs-lib/src/types';
 
 export const createBtcRedeemTx = ({
   expiry,
@@ -43,13 +45,16 @@ export const createBtcRedeemTx = ({
   const network = btcNetwork;
   const provider = btcProvider;
   const redeemerPubkey = toXOnly(redeemerAddress);
-  const addressResult = generateAddress({
+  const scriptTree: Taptree = getLeaves({
     expiry,
     initiatorPubkey,
-    internalPubkey,
-    network,
     redeemerPubkey,
     secretHash,
+  });
+  const addressResult = generateAddress({
+    internalPubkey,
+    network,
+    scriptTree,
   });
   if (!addressResult.ok) {
     return Promise.resolve(addressResult);
@@ -68,7 +73,12 @@ export const createBtcRedeemTx = ({
   return Promise.all([provider.getFeeRates(), provider.getUTXOs(address)])
     .then<
       Result<
-        { address: string; feeRates: FeeRates; utxos: Array<BitcoinUTXO> },
+        {
+          address: string;
+          feeRates: FeeRates;
+          scriptTree: Taptree;
+          utxos: Array<BitcoinUTXO>;
+        },
         string
       >
     >(([feeRates, utxos]) => {
@@ -77,6 +87,7 @@ export const createBtcRedeemTx = ({
         val: {
           address,
           feeRates,
+          scriptTree,
           utxos,
         },
       };
@@ -86,17 +97,14 @@ export const createBtcRedeemTx = ({
         return result;
       }
       const {
-        val: { address, feeRates, utxos },
+        val: { address, feeRates, scriptTree, utxos },
       } = result;
       const leafScript = redeemLeaf({ redeemerPubkey, secretHash });
       const controlBlockResult = generateControlBlockFor({
-        expiry,
-        initiatorPubkey,
         internalPubkey,
         leafScript,
         network,
-        redeemerPubkey,
-        secretHash,
+        scriptTree,
       });
       if (!controlBlockResult.ok) {
         return controlBlockResult;

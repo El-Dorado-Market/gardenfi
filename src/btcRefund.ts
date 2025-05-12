@@ -17,10 +17,12 @@ import {
   generateOutputScripts,
   getFee,
   getLeafHash,
+  getLeaves,
   htlcErrors,
   refundLeaf,
   type FeeRates,
 } from './btc';
+import type { Taptree } from 'bitcoinjs-lib/src/types';
 
 export const createBtcRefundTx = ({
   expiry,
@@ -44,13 +46,16 @@ export const createBtcRefundTx = ({
   const network = btcNetwork;
   const provider = btcProvider;
   const redeemerPubkey = toXOnly(redeemerAddress);
-  const addressResult = generateAddress({
+  const scriptTree: Taptree = getLeaves({
     expiry,
     initiatorPubkey,
-    internalPubkey,
-    network,
     redeemerPubkey,
     secretHash,
+  });
+  const addressResult = generateAddress({
+    internalPubkey,
+    network,
+    scriptTree,
   });
   if (!addressResult.ok) {
     return Promise.resolve(addressResult);
@@ -58,23 +63,28 @@ export const createBtcRefundTx = ({
   const { val: address } = addressResult;
   return provider
     .getUTXOs(address)
-    .then<Result<{ address: string; utxos: Array<BitcoinUTXO> }, string>>(
-      (utxos) => {
-        return {
-          ok: true,
-          val: {
-            address,
-            utxos,
-          },
-        };
-      },
-    )
+    .then<
+      Result<
+        { address: string; scriptTree: Taptree; utxos: Array<BitcoinUTXO> },
+        string
+      >
+    >((utxos) => {
+      return {
+        ok: true,
+        val: {
+          address,
+          scriptTree,
+          utxos,
+        },
+      };
+    })
     .then<
       Result<
         {
           address: string;
           blocksToExpiry: number;
           feeRates: FeeRates;
+          scriptTree: Taptree;
           utxos: Array<BitcoinUTXO>;
         },
         string
@@ -84,7 +94,7 @@ export const createBtcRefundTx = ({
         return result;
       }
       const {
-        val: { address, utxos },
+        val: { address, scriptTree, utxos },
       } = result;
       return Promise.all([
         getBlocksToExpiry({ expiry, provider, utxos }),
@@ -96,6 +106,7 @@ export const createBtcRefundTx = ({
             address,
             blocksToExpiry,
             feeRates,
+            scriptTree,
             utxos,
           },
         };
@@ -106,7 +117,7 @@ export const createBtcRefundTx = ({
         return result;
       }
       const {
-        val: { address, blocksToExpiry, feeRates, utxos },
+        val: { address, blocksToExpiry, feeRates, scriptTree, utxos },
       } = result;
       if (blocksToExpiry > 0) {
         return {
@@ -116,13 +127,10 @@ export const createBtcRefundTx = ({
       }
       const leafScript = refundLeaf({ expiry, initiatorPubkey });
       const controlBlockResult = generateControlBlockFor({
-        expiry,
-        initiatorPubkey,
         internalPubkey,
         leafScript,
         network,
-        redeemerPubkey,
-        secretHash,
+        scriptTree,
       });
       if (!controlBlockResult.ok) {
         return controlBlockResult;
