@@ -54,9 +54,6 @@ export const createEvmRedeemTx = ({
   orderId: string;
   secret: string;
 }): EvmTransaction => {
-  console.log({
-    redeemOrderId: orderId,
-  });
   const data = encodeFunctionData({
     abi: AtomicSwapABI,
     functionName: 'redeem',
@@ -78,9 +75,6 @@ export const createEvmRefundTx = ({
   contractAddress: string;
   orderId: string;
 }): EvmTransaction => {
-  console.log({
-    refundOrderId: orderId,
-  });
   const data = encodeFunctionData({
     abi: AtomicSwapABI,
     functionName: 'refund',

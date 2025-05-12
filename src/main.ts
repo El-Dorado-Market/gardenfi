@@ -174,7 +174,7 @@ export const fetchQuote = (props: {
       const {
         val: { orderWithAction, secret },
       } = result;
-      console.dir({ matchedOrder: orderWithAction }, { depth: null });
+      console.dir({ order: orderWithAction }, { depth: null });
       if (isBitcoin(fromAsset.chain)) {
         return {
           ok: true,
