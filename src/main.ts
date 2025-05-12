@@ -1,11 +1,11 @@
 import { Garden, OrderActions, Quote, type SwapParams } from '@gardenfi/core';
-import { Environment, type Err, type Result } from '@gardenfi/utils';
-import { type Asset, type Chain, isEVM } from '@gardenfi/orderbook';
+import { Environment, with0x, type Result } from '@gardenfi/utils';
+import type { Asset, Chain } from '@gardenfi/orderbook';
 import { api, digestKey, fromAsset, toAsset } from './utils';
-import { evmWalletClient, type EvmTransaction } from './evm';
-import { swap } from './swap';
+import { evmWalletClient } from './evm';
+import { swap, type Tx } from './swap';
 import { pollOrder, type OrderWithAction } from './orderbook';
-import { isHex } from 'viem';
+import { btcProvider } from './btc';
 
 // #region env
 const amountUnit = Number.parseFloat(process.env.AMOUNT_UNIT ?? '');
@@ -13,9 +13,9 @@ if (Number.isNaN(amountUnit)) {
   throw new Error('AMOUNT_UNIT is not set');
 }
 
-const btcAddress = process.env.BTC_ADDRESS;
-if (!btcAddress) {
-  throw new Error('BTC_ADDRESS is not set');
+const btcRecipientAddress = process.env.BTC_RECIPIENT_ADDRESS;
+if (!btcRecipientAddress) {
+  throw new Error('BTC_RECIPIENT_ADDRESS is not set');
 }
 // #endregion
 
@@ -69,7 +69,11 @@ export const fetchQuote = (props: {
     .getQuote(orderPair, sendAmount, false)
     .then<
       Result<
-        { orderId: string; redeemTx: EvmTransaction; refundTx: EvmTransaction },
+        {
+          orderId: string;
+          redeemTx: Tx;
+          refundTx: Tx;
+        },
         string
       >
     >((result) => {
@@ -89,11 +93,12 @@ export const fetchQuote = (props: {
         receiveAmount: quoteAmount,
         additionalData: {
           strategyId,
-          btcAddress,
+          btcAddress: btcRecipientAddress,
         },
       };
       return swap({
         ...swapParams,
+        btcRecipientAddress,
         evmAddress: evmWalletClient.account.address,
       });
     })
@@ -101,8 +106,8 @@ export const fetchQuote = (props: {
       Result<
         {
           orderWithAction: OrderWithAction;
-          redeemTx: EvmTransaction;
-          refundTx: EvmTransaction;
+          redeemTx: Tx;
+          refundTx: Tx;
         },
         string
       >
@@ -146,14 +151,14 @@ export const fetchQuote = (props: {
         | {
             depositAddress: string;
             orderId: string;
-            redeemTx: EvmTransaction;
-            refundTx: EvmTransaction;
+            redeemTx: Tx;
+            refundTx: Tx;
           }
         | {
             inboundTx: string;
             orderId: string;
-            redeemTx: EvmTransaction;
-            refundTx: EvmTransaction;
+            redeemTx: Tx;
+            refundTx: Tx;
           },
         string
       >
@@ -165,7 +170,7 @@ export const fetchQuote = (props: {
         val: { orderWithAction, redeemTx, refundTx },
       } = result;
       console.dir({ matchedOrder: orderWithAction }, { depth: null });
-      if (isEVM(fromAsset.chain) && garden.evmHTLC) {
+      if (typeof redeemTx === 'object' && garden.evmHTLC) {
         return garden.evmHTLC
           .initiate(orderWithAction)
           .then((inboundTxResult) => {
@@ -197,8 +202,8 @@ export const fetchQuote = (props: {
       Result<
         {
           orderWithAction: OrderWithAction;
-          redeemTx: EvmTransaction;
-          refundTx: EvmTransaction;
+          redeemTx: Tx;
+          refundTx: Tx;
         },
         string
       >
@@ -240,40 +245,58 @@ export const fetchQuote = (props: {
         };
       });
     })
-    .catch<Err<string>>((error) => {
-      console.dir({ error }, { depth: null });
-      return { error: 'Unexpected error occurred', ok: false };
-    })
-    .then((result) => {
+    .then<Result<string, string>>((result) => {
       if (!result.ok) {
-        console.error(result.error);
-        return;
+        return result;
       }
       const {
         val: { orderWithAction, redeemTx, refundTx },
       } = result;
-      if (
-        isEVM(orderWithAction.destination_swap.chain) &&
-        orderWithAction.action === OrderActions.Redeem &&
-        isHex(redeemTx.data) &&
-        isHex(redeemTx.to)
-      ) {
-        return evmWalletClient.sendTransaction({
-          data: redeemTx.data,
-          to: redeemTx.to,
+      if (orderWithAction.action === OrderActions.Refund) {
+        if (typeof refundTx === 'object') {
+          return evmWalletClient
+            .sendTransaction({
+              data: with0x(refundTx.data),
+              to: with0x(refundTx.to),
+            })
+            .then((outboundTx) => {
+              return { ok: true, val: outboundTx };
+            });
+        }
+        return btcProvider.broadcast(refundTx).then((outboundTx) => {
+          return {
+            ok: true,
+            val: outboundTx,
+          };
         });
       }
-      if (
-        isEVM(orderWithAction.source_swap.chain) &&
-        orderWithAction.action === OrderActions.Refund &&
-        isHex(refundTx.data) &&
-        isHex(refundTx.to)
-      ) {
-        return evmWalletClient.sendTransaction({
-          data: refundTx.data,
-          to: refundTx.to,
-        });
+      if (typeof redeemTx === 'object') {
+        return evmWalletClient
+          .sendTransaction({
+            data: with0x(redeemTx.data),
+            to: with0x(redeemTx.to),
+          })
+          .then((outboundTx) => {
+            return { ok: true, val: outboundTx };
+          });
       }
+      return btcProvider.broadcast(redeemTx).then((outboundTx) => {
+        return {
+          ok: true,
+          val: outboundTx,
+        };
+      });
+    })
+    .then((result) => {
+      if (!result.ok) {
+        console.error({ error: result.error });
+        return;
+      }
+      const { val: outboundTx } = result;
+      console.log({ outboundTx });
+    })
+    .catch((error) => {
+      console.dir({ error }, { depth: null });
     });
 };
 

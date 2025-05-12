@@ -2,6 +2,7 @@ import { trim0x } from '@catalogfi/utils';
 import { Quote, type SwapParams } from '@gardenfi/core';
 import {
   type AdditionalDataWithStrategyId,
+  Chains,
   type CreateOrderRequestWithAdditionalData,
   type CreateOrderReqWithStrategyId,
   getTimeLock,
@@ -11,7 +12,7 @@ import {
 import BigNumber from 'bignumber.js';
 import { generateSecret } from './secretManager';
 import { api, digestKey } from './utils';
-import type { Result } from '@gardenfi/utils';
+import { Err, type Result } from '@gardenfi/utils';
 import { auth } from './auth';
 import { getBtcAddress } from './btc';
 import { orderbook } from './orderbook';
@@ -20,13 +21,23 @@ import {
   createEvmRefundTx,
   type EvmTransaction,
 } from './evm';
+import { createBtcRedeemTx } from './btcRedeem';
+import { createBtcRefundTx } from './btcRefund';
 
-export type SwapProps = SwapParams & { evmAddress: string };
+export type SwapProps = SwapParams & {
+  btcRecipientAddress: string;
+  evmAddress: string;
+};
+export type Tx = EvmTransaction | string;
 export const swap = (
   props: SwapProps,
 ): Promise<
   Result<
-    { orderId: string; redeemTx: EvmTransaction; refundTx: EvmTransaction },
+    {
+      orderId: string;
+      redeemTx: Tx;
+      refundTx: Tx;
+    },
     string
   >
 > => {
@@ -36,7 +47,8 @@ export const swap = (
   }
   const {
     val: {
-      additionalData: { strategyId, btcAddress: bitcoinOptionalRecipient },
+      additionalData: { strategyId },
+      btcRecipientAddress,
       fromAsset,
       evmAddress,
       minDestinationConfirmations,
@@ -49,13 +61,19 @@ export const swap = (
   return getBtcAddress()
     .then<
       Result<
-        { attestedQuote: CreateOrderRequestWithAdditionalData; secret: string },
+        {
+          attestedQuote: CreateOrderRequestWithAdditionalData;
+          redeemTx: Tx;
+          refundTx: Tx;
+        },
         string
       >
     >((btcAddressResult) => {
       if (!btcAddressResult.ok) {
         return { error: btcAddressResult.error, ok: false };
       }
+      const { val: btcAddress } = btcAddressResult;
+      const expiry = getTimeLock(Chains.bitcoin);
       const nonce = Date.now().toString();
       const secretResult = generateSecret({
         digestKey: digestKey.digestKey,
@@ -64,16 +82,19 @@ export const swap = (
       if (!secretResult.ok) {
         return { error: secretResult.error, ok: false };
       }
+      const {
+        val: { secret, secretHash },
+      } = secretResult;
       const additionalData: AdditionalDataWithStrategyId['additional_data'] = {
         strategy_id: strategyId,
-        ...(bitcoinOptionalRecipient && {
-          bitcoin_optional_recipient: bitcoinOptionalRecipient,
+        ...(btcRecipientAddress && {
+          bitcoin_optional_recipient: btcRecipientAddress,
         }),
       };
       const receiveAddress =
-        (isBitcoin(toAsset.chain) && btcAddressResult.val) || evmAddress;
+        (isBitcoin(toAsset.chain) && btcAddress) || evmAddress;
       const sendAddress =
-        (isBitcoin(fromAsset.chain) && btcAddressResult.val) || evmAddress;
+        (isBitcoin(fromAsset.chain) && btcAddress) || evmAddress;
       const order: CreateOrderReqWithStrategyId = {
         additional_data: additionalData,
         destination_amount: receiveAmount,
@@ -83,26 +104,74 @@ export const swap = (
         initiator_destination_address: receiveAddress,
         initiator_source_address: sendAddress,
         min_destination_confirmations: minDestinationConfirmations ?? 0,
-        nonce: nonce,
-        secret_hash: trim0x(secretResult.val.secretHash),
+        nonce,
+        secret_hash: trim0x(secretHash),
         source_amount: sendAmount,
         source_asset: fromAsset.atomicSwapAddress,
         source_chain: fromAsset.chain,
         timelock,
       };
-      return (
-        new Quote(api.quote).getAttestedQuote(order) as Promise<
-          Result<CreateOrderRequestWithAdditionalData, string>
-        >
-      ).then((attestedQuoteResult) => {
-        if (!attestedQuoteResult.ok) {
-          return attestedQuoteResult;
+      const txPromises: [
+        Promise<Result<Tx, string>>,
+        Promise<Result<Tx, string>>,
+      ] = [
+        (isBitcoin(toAsset.chain) &&
+          createBtcRedeemTx({
+            expiry,
+            initiatorAddress: order.initiator_destination_address,
+            receiver: btcRecipientAddress,
+            redeemerAddress: btcAddress,
+            secret,
+            secretHash,
+          })) ||
+          Promise.resolve({
+            ok: true,
+            val: createEvmRedeemTx({
+              contractAddress: order.destination_asset,
+              initiatorAddress: order.initiator_destination_address,
+              secret,
+              secretHash,
+            }),
+          }),
+        (isBitcoin(fromAsset.chain) &&
+          createBtcRefundTx({
+            expiry,
+            initiatorAddress: order.initiator_source_address,
+            receiver: btcRecipientAddress,
+            redeemerAddress: btcAddress,
+            secretHash,
+          })) ||
+          Promise.resolve({
+            ok: true,
+            val: createEvmRefundTx({
+              contractAddress: order.source_asset,
+              initiatorAddress: order.initiator_source_address,
+              secretHash,
+            }),
+          }),
+      ];
+      return Promise.all([
+        new Quote(api.quote).getAttestedQuote(order),
+        ...txPromises,
+      ]).then(([attestedQuoteResult, redeemTxResult, refundTxResult]) => {
+        if (attestedQuoteResult.error) {
+          return Err(attestedQuoteResult.error);
         }
+        const { val: attestedQuote } = attestedQuoteResult;
+        if (!redeemTxResult.ok) {
+          return redeemTxResult;
+        }
+        const { val: redeemTx } = redeemTxResult;
+        if (!refundTxResult.ok) {
+          return refundTxResult;
+        }
+        const { val: refundTx } = refundTxResult;
         return {
           ok: true,
           val: {
-            attestedQuote: attestedQuoteResult.val,
-            secret: secretResult.val.secret,
+            attestedQuote,
+            redeemTx,
+            refundTx,
           },
         };
       });
@@ -111,8 +180,8 @@ export const swap = (
       Result<
         {
           orderId: string;
-          redeemTx: EvmTransaction;
-          refundTx: EvmTransaction;
+          redeemTx: Tx;
+          refundTx: Tx;
         },
         string
       >
@@ -121,35 +190,40 @@ export const swap = (
         return { error: result.error, ok: false };
       }
       const {
-        val: { attestedQuote, secret },
+        val: { attestedQuote, redeemTx, refundTx },
       } = result;
-      return (
-        orderbook.createOrder(attestedQuote, auth) as Promise<
-          Result<string, string>
-        >
-      ).then((result) => {
-        if (!result.ok) {
-          return result;
-        }
-        const { val: orderId } = result;
-        return {
-          ok: true,
-          val: {
-            orderId,
-            redeemTx: createEvmRedeemTx({
-              contractAddress: attestedQuote.destination_asset,
-              initiatorAddress: attestedQuote.initiator_destination_address,
-              secret,
-              secretHash: attestedQuote.secret_hash,
-            }),
-            refundTx: createEvmRefundTx({
-              contractAddress: attestedQuote.source_asset,
-              initiatorAddress: attestedQuote.initiator_source_address,
-              secretHash: attestedQuote.secret_hash,
-            }),
-          },
-        };
-      });
+      return orderbook
+        .createOrder(attestedQuote, auth)
+        .then((orderIdResult) => {
+          if (orderIdResult.error) {
+            return Err(orderIdResult.error);
+          }
+          const { val: orderId } = orderIdResult;
+          return {
+            ok: true,
+            val: {
+              orderId,
+              redeemTx,
+              refundTx,
+            },
+          };
+        });
+    })
+    .then((result) => {
+      if (!result.ok) {
+        return result;
+      }
+      const {
+        val: { orderId, redeemTx, refundTx },
+      } = result;
+      return {
+        ok: true,
+        val: {
+          orderId,
+          redeemTx,
+          refundTx,
+        },
+      };
     });
 };
 
