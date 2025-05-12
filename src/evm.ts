@@ -4,6 +4,7 @@ import { mnemonicToAccount } from 'viem/accounts';
 import {
   type Address,
   type Hex,
+  type SendTransactionRequest,
   type Chain as ViemChain,
   createWalletClient,
   encodeAbiParameters,
@@ -28,8 +29,7 @@ if (!mnemonic) {
 export const account = mnemonicToAccount(mnemonic);
 
 export const chainMap: { [K in string]?: ViemChain } = evmToViemChainMap;
-const viemChain: ViemChain | undefined =
-  chainMap[fromAsset.chain] || chainMap[toAsset.chain];
+const viemChain = chainMap[fromAsset.chain] || chainMap[toAsset.chain];
 if (!viemChain) {
   throw new Error(
     'Neither from chain "' +
@@ -63,10 +63,8 @@ export const createEvmRedeemTx = ({
     args: [with0x(orderId), with0x(secret)],
   });
   return {
-    from: evmWalletClient.account.address,
     data,
     to: with0x(contractAddress),
-    value: BigInt(0),
   };
 };
 
@@ -90,18 +88,11 @@ export const createEvmRefundTx = ({
   });
   return {
     data,
-    from: evmWalletClient.account.address,
     to: with0x(contractAddress),
-    value: BigInt(0),
   };
 };
 
-export type EvmTransaction = {
-  from: Hex;
-  data: Hex;
-  to: Hex;
-  value: bigint;
-};
+export type EvmTransaction = SendTransactionRequest;
 
 export const getOrderId = ({
   initiatorAddress,
