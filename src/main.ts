@@ -1,11 +1,20 @@
+import type * as bitcoin from 'bitcoinjs-lib';
 import { Garden, OrderActions, Quote, type SwapParams } from '@gardenfi/core';
-import { Environment, with0x, type Result } from '@gardenfi/utils';
-import type { Asset, Chain } from '@gardenfi/orderbook';
+import { Environment, type Result } from '@gardenfi/utils';
+import {
+  Chains,
+  getTimeLock,
+  isBitcoin,
+  type Asset,
+  type Chain,
+} from '@gardenfi/orderbook';
 import { api, digestKey, fromAsset, toAsset } from './utils';
-import { evmWalletClient } from './evm';
-import { swap, type Tx } from './swap';
+import { createEvmRedeemTx, createEvmRefundTx, evmWalletClient } from './evm';
+import { swap } from './swap';
 import { pollOrder, type OrderWithAction } from './orderbook';
-import { btcProvider } from './btc';
+import { btcProvider, type Signer } from './btc';
+import { createBtcRefundTx, signBtcRefundTx } from './btcRefund';
+import { createBtcRedeemTx, signBtcRedeemTx } from './btcRedeem';
 
 // #region env
 const amountUnit = Number.parseFloat(process.env.AMOUNT_UNIT ?? '');
@@ -71,8 +80,7 @@ export const fetchQuote = (props: {
       Result<
         {
           orderId: string;
-          redeemTx: Tx;
-          refundTx: Tx;
+          secret: string;
         },
         string
       >
@@ -106,8 +114,7 @@ export const fetchQuote = (props: {
       Result<
         {
           orderWithAction: OrderWithAction;
-          redeemTx: Tx;
-          refundTx: Tx;
+          secret: string;
         },
         string
       >
@@ -116,7 +123,7 @@ export const fetchQuote = (props: {
         return { error: result.error, ok: false };
       }
       const {
-        val: { orderId, redeemTx, refundTx },
+        val: { orderId, secret },
       } = result;
       return pollOrder({
         filter: ({ action, ...order }) => {
@@ -136,12 +143,12 @@ export const fetchQuote = (props: {
         if (!orderWithActionResult.ok) {
           return orderWithActionResult;
         }
+        const { val: orderWithAction } = orderWithActionResult;
         return {
           ok: true,
           val: {
-            orderWithAction: orderWithActionResult.val,
-            redeemTx,
-            refundTx,
+            orderWithAction,
+            secret,
           },
         };
       });
@@ -151,14 +158,12 @@ export const fetchQuote = (props: {
         | {
             depositAddress: string;
             orderId: string;
-            redeemTx: Tx;
-            refundTx: Tx;
+            secret: string;
           }
         | {
             inboundTx: string;
             orderId: string;
-            redeemTx: Tx;
-            refundTx: Tx;
+            secret: string;
           },
         string
       >
@@ -167,43 +172,41 @@ export const fetchQuote = (props: {
         return { error: result.error, ok: false };
       }
       const {
-        val: { orderWithAction, redeemTx, refundTx },
+        val: { orderWithAction, secret },
       } = result;
       console.dir({ matchedOrder: orderWithAction }, { depth: null });
-      if (typeof redeemTx === 'object' && garden.evmHTLC) {
-        return garden.evmHTLC
-          .initiate(orderWithAction)
-          .then((inboundTxResult) => {
-            if (!inboundTxResult.ok) {
-              return inboundTxResult;
-            }
-            return {
-              ok: true,
-              val: {
-                inboundTx: inboundTxResult.val,
-                orderId: orderWithAction.create_order.create_id,
-                redeemTx,
-                refundTx,
-              },
-            };
-          });
+      if (isBitcoin(fromAsset.chain)) {
+        return {
+          ok: true,
+          val: {
+            depositAddress: orderWithAction.source_swap.swap_id,
+            orderId: orderWithAction.create_order.create_id,
+            secret,
+          },
+        };
       }
-      return {
-        ok: true,
-        val: {
-          depositAddress: orderWithAction.source_swap.swap_id,
-          orderId: orderWithAction.create_order.create_id,
-          redeemTx,
-          refundTx,
-        },
-      };
+      // biome-ignore lint/style/noNonNullAssertion: TODO initiate without garden
+      return garden
+        .evmHTLC!.initiate(orderWithAction)
+        .then((inboundTxResult) => {
+          if (!inboundTxResult.ok) {
+            return inboundTxResult;
+          }
+          return {
+            ok: true,
+            val: {
+              inboundTx: inboundTxResult.val,
+              orderId: orderWithAction.create_order.create_id,
+              secret,
+            },
+          };
+        });
     })
     .then<
       Result<
         {
           orderWithAction: OrderWithAction;
-          redeemTx: Tx;
-          refundTx: Tx;
+          secret: string;
         },
         string
       >
@@ -215,7 +218,7 @@ export const fetchQuote = (props: {
         console.log({ inboundTx: result.val.inboundTx });
       }
       const {
-        val: { orderId, redeemTx, refundTx },
+        val: { orderId, secret },
       } = result;
       return pollOrder({
         attemptsThreshold: 360,
@@ -239,8 +242,7 @@ export const fetchQuote = (props: {
           ok: true,
           val: {
             orderWithAction: orderWithActionResult.val,
-            redeemTx,
-            refundTx,
+            secret,
           },
         };
       });
@@ -250,41 +252,99 @@ export const fetchQuote = (props: {
         return result;
       }
       const {
-        val: { orderWithAction, redeemTx, refundTx },
+        val: { orderWithAction, secret },
       } = result;
       if (orderWithAction.action === OrderActions.Refund) {
-        if (typeof refundTx === 'object') {
-          return evmWalletClient
-            .sendTransaction({
-              data: with0x(refundTx.data),
-              to: with0x(refundTx.to),
+        if (isBitcoin(orderWithAction.source_swap.chain)) {
+          return createBtcRefundTx({
+            expiry: getTimeLock(Chains.bitcoin),
+            initiatorAddress: orderWithAction.source_swap.initiator,
+            receiver: btcRecipientAddress,
+            redeemerAddress: orderWithAction.source_swap.redeemer,
+            secretHash: orderWithAction.source_swap.secret_hash,
+          })
+            .then<Result<bitcoin.Transaction, string>>((result) => {
+              if (!result.ok) {
+                return result;
+              }
+              const { val: signRefundTxProps } = result;
+              const signer = {} as Signer; // TODO
+              return signBtcRefundTx({ ...signRefundTxProps, signer }).then(
+                (tx) => {
+                  return {
+                    ok: true,
+                    val: tx,
+                  };
+                },
+              );
             })
-            .then((outboundTx) => {
-              return { ok: true, val: outboundTx };
+            .then((result) => {
+              if (!result.ok) {
+                return result;
+              }
+              const { val: tx } = result;
+              return btcProvider.broadcast(tx.toHex()).then((outboundTx) => {
+                return {
+                  ok: true,
+                  val: outboundTx,
+                };
+              });
             });
         }
-        return btcProvider.broadcast(refundTx).then((outboundTx) => {
-          return {
-            ok: true,
-            val: outboundTx,
-          };
+        const refundTx = createEvmRefundTx({
+          contractAddress: orderWithAction.source_swap.asset,
+          orderId: orderWithAction.create_order.create_id,
+        });
+        return evmWalletClient.sendTransaction(refundTx).then((outboundTx) => {
+          return { ok: true, val: outboundTx };
         });
       }
-      if (typeof redeemTx === 'object') {
-        return evmWalletClient
-          .sendTransaction({
-            data: with0x(redeemTx.data),
-            to: with0x(redeemTx.to),
+      if (isBitcoin(orderWithAction.destination_swap.chain)) {
+        return createBtcRedeemTx({
+          expiry: getTimeLock(Chains.bitcoin),
+          initiatorAddress: orderWithAction.destination_swap.initiator,
+          receiver: btcRecipientAddress,
+          redeemerAddress: orderWithAction.destination_swap.redeemer,
+          secret,
+          secretHash: orderWithAction.destination_swap.secret_hash,
+        })
+          .then<Result<bitcoin.Transaction, string>>((result) => {
+            if (!result.ok) {
+              return result;
+            }
+            const { val: signRedeemTxProps } = result;
+            const signer = {} as Signer; // TODO
+            return signBtcRedeemTx({ ...signRedeemTxProps, signer }).then(
+              (tx) => {
+                return {
+                  ok: true,
+                  val: tx,
+                };
+              },
+            );
           })
-          .then((outboundTx) => {
-            return { ok: true, val: outboundTx };
+          .then((result) => {
+            if (!result.ok) {
+              return result;
+            }
+            const { val: redeemTx } = result;
+            return btcProvider
+              .broadcast(redeemTx.toHex())
+              .then((outboundTx) => {
+                return {
+                  ok: true,
+                  val: outboundTx,
+                };
+              });
           });
       }
-      return btcProvider.broadcast(redeemTx).then((outboundTx) => {
-        return {
-          ok: true,
-          val: outboundTx,
-        };
+      const redeemTx = createEvmRedeemTx({
+        contractAddress: orderWithAction.destination_swap.asset,
+        orderId: orderWithAction.create_order.create_id,
+        secret,
+      });
+      return evmWalletClient.sendTransaction(redeemTx).then((outboundTx) => {
+        return { ok: true, val: outboundTx };
       });
     })
     .then((result) => {

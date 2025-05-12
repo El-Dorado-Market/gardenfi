@@ -2,7 +2,6 @@ import { trim0x } from '@catalogfi/utils';
 import { Quote, type SwapParams } from '@gardenfi/core';
 import {
   type AdditionalDataWithStrategyId,
-  Chains,
   type CreateOrderRequestWithAdditionalData,
   type CreateOrderReqWithStrategyId,
   getTimeLock,
@@ -16,27 +15,18 @@ import { Err, type Result } from '@gardenfi/utils';
 import { auth } from './auth';
 import { getBtcAddress } from './btc';
 import { orderbook } from './orderbook';
-import {
-  createEvmRedeemTx,
-  createEvmRefundTx,
-  type EvmTransaction,
-} from './evm';
-import { createBtcRedeemTx } from './btcRedeem';
-import { createBtcRefundTx } from './btcRefund';
 
 export type SwapProps = SwapParams & {
   btcRecipientAddress: string;
   evmAddress: string;
 };
-export type Tx = EvmTransaction | string;
 export const swap = (
   props: SwapProps,
 ): Promise<
   Result<
     {
       orderId: string;
-      redeemTx: Tx;
-      refundTx: Tx;
+      secret: string;
     },
     string
   >
@@ -63,8 +53,7 @@ export const swap = (
       Result<
         {
           attestedQuote: CreateOrderRequestWithAdditionalData;
-          redeemTx: Tx;
-          refundTx: Tx;
+          secret: string;
         },
         string
       >
@@ -73,7 +62,6 @@ export const swap = (
         return { error: btcAddressResult.error, ok: false };
       }
       const { val: btcAddress } = btcAddressResult;
-      const expiry = getTimeLock(Chains.bitcoin);
       const nonce = Date.now().toString();
       const secretResult = generateSecret({
         digestKey: digestKey.digestKey,
@@ -95,7 +83,7 @@ export const swap = (
         (isBitcoin(toAsset.chain) && btcAddress) || evmAddress;
       const sendAddress =
         (isBitcoin(fromAsset.chain) && btcAddress) || evmAddress;
-      const order: CreateOrderReqWithStrategyId = {
+      const orderRequest: CreateOrderReqWithStrategyId = {
         additional_data: additionalData,
         destination_amount: receiveAmount,
         destination_asset: toAsset.atomicSwapAddress,
@@ -111,77 +99,27 @@ export const swap = (
         source_chain: fromAsset.chain,
         timelock,
       };
-      const txPromises: [
-        Promise<Result<Tx, string>>,
-        Promise<Result<Tx, string>>,
-      ] = [
-        (isBitcoin(toAsset.chain) &&
-          createBtcRedeemTx({
-            expiry,
-            initiatorAddress: order.initiator_destination_address,
-            receiver: btcRecipientAddress,
-            redeemerAddress: btcAddress,
-            secret,
-            secretHash,
-          })) ||
-          Promise.resolve({
+      return new Quote(api.quote)
+        .getAttestedQuote(orderRequest)
+        .then((attestedQuoteResult) => {
+          if (attestedQuoteResult.error) {
+            return Err(attestedQuoteResult.error);
+          }
+          const { val: attestedQuote } = attestedQuoteResult;
+          return {
             ok: true,
-            val: createEvmRedeemTx({
-              contractAddress: order.destination_asset,
-              initiatorAddress: order.initiator_destination_address,
+            val: {
+              attestedQuote,
               secret,
-              secretHash,
-            }),
-          }),
-        (isBitcoin(fromAsset.chain) &&
-          createBtcRefundTx({
-            expiry,
-            initiatorAddress: order.initiator_source_address,
-            receiver: btcRecipientAddress,
-            redeemerAddress: btcAddress,
-            secretHash,
-          })) ||
-          Promise.resolve({
-            ok: true,
-            val: createEvmRefundTx({
-              contractAddress: order.source_asset,
-              initiatorAddress: order.initiator_source_address,
-              secretHash,
-            }),
-          }),
-      ];
-      return Promise.all([
-        new Quote(api.quote).getAttestedQuote(order),
-        ...txPromises,
-      ]).then(([attestedQuoteResult, redeemTxResult, refundTxResult]) => {
-        if (attestedQuoteResult.error) {
-          return Err(attestedQuoteResult.error);
-        }
-        const { val: attestedQuote } = attestedQuoteResult;
-        if (!redeemTxResult.ok) {
-          return redeemTxResult;
-        }
-        const { val: redeemTx } = redeemTxResult;
-        if (!refundTxResult.ok) {
-          return refundTxResult;
-        }
-        const { val: refundTx } = refundTxResult;
-        return {
-          ok: true,
-          val: {
-            attestedQuote,
-            redeemTx,
-            refundTx,
-          },
-        };
-      });
+            },
+          };
+        });
     })
     .then<
       Result<
         {
           orderId: string;
-          redeemTx: Tx;
-          refundTx: Tx;
+          secret: string;
         },
         string
       >
@@ -190,7 +128,7 @@ export const swap = (
         return { error: result.error, ok: false };
       }
       const {
-        val: { attestedQuote, redeemTx, refundTx },
+        val: { attestedQuote, secret },
       } = result;
       return orderbook
         .createOrder(attestedQuote, auth)
@@ -203,27 +141,10 @@ export const swap = (
             ok: true,
             val: {
               orderId,
-              redeemTx,
-              refundTx,
+              secret,
             },
           };
         });
-    })
-    .then((result) => {
-      if (!result.ok) {
-        return result;
-      }
-      const {
-        val: { orderId, redeemTx, refundTx },
-      } = result;
-      return {
-        ok: true,
-        val: {
-          orderId,
-          redeemTx,
-          refundTx,
-        },
-      };
     });
 };
 

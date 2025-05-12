@@ -1,8 +1,4 @@
-import type {
-  BitcoinProvider,
-  BitcoinUTXO,
-  BitcoinWallet,
-} from '@catalogfi/wallets';
+import type { BitcoinProvider, BitcoinUTXO } from '@catalogfi/wallets';
 import * as bitcoin from 'bitcoinjs-lib';
 import { toXOnly } from '@gardenfi/core';
 import type { Result } from '@gardenfi/utils';
@@ -21,6 +17,7 @@ import {
   htlcErrors,
   refundLeaf,
   type FeeRates,
+  type Signer,
 } from './btc';
 import type { Taptree } from 'bitcoinjs-lib/src/types';
 
@@ -36,7 +33,7 @@ export const createBtcRefundTx = ({
   receiver: string;
   redeemerAddress: string;
   secretHash: string;
-}): Promise<Result<string, string>> => {
+}): Promise<Result<SignRefundTxProps, string>> => {
   const internalPubkeyResult = generateInternalPubkey();
   if (!internalPubkeyResult.ok) {
     return Promise.resolve(internalPubkeyResult);
@@ -161,11 +158,10 @@ export const createBtcRefundTx = ({
         leafHash,
         leafScript,
         outputScripts,
-        signer,
         tx: tempTx,
         values,
       };
-      return signRefundTx(signTxProps).then((tx) => {
+      return signBtcRefundTx({ ...signTxProps, signer }).then((tx) => {
         return {
           ok: true,
           val: {
@@ -178,18 +174,6 @@ export const createBtcRefundTx = ({
               tx: new bitcoin.Transaction(),
             }),
           },
-        };
-      });
-    })
-    .then<Result<string, string>>((result) => {
-      if (!result.ok) {
-        return result;
-      }
-      const { val: signTxProps } = result;
-      return signRefundTx(signTxProps).then((tx) => {
-        return {
-          ok: true,
-          val: tx.toHex(),
         };
       });
     });
@@ -224,11 +208,10 @@ export type SignRefundTxProps = {
   leafHash: Buffer;
   leafScript: Buffer;
   outputScripts: Array<Buffer>;
-  signer: BitcoinWallet;
   tx: bitcoin.Transaction;
   values: Array<number>;
 };
-export const signRefundTx = ({
+export const signBtcRefundTx = ({
   controlBlock,
   expiry,
   hashType,
@@ -238,7 +221,7 @@ export const signRefundTx = ({
   signer,
   tx,
   values,
-}: SignRefundTxProps): Promise<bitcoin.Transaction> => {
+}: SignRefundTxProps & { signer: Signer }): Promise<bitcoin.Transaction> => {
   return Promise.all(
     tx.ins.map((input, i) => {
       input.sequence = expiry;

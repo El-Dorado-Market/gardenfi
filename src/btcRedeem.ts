@@ -15,9 +15,10 @@ import {
   htlcErrors,
   redeemLeaf,
   type FeeRates,
+  type Signer,
 } from './btc';
 import { toXOnly } from '@gardenfi/core';
-import type { BitcoinUTXO, BitcoinWallet } from '@catalogfi/wallets';
+import type { BitcoinUTXO } from '@catalogfi/wallets';
 import { trim0x } from '@catalogfi/utils';
 import type { Taptree } from 'bitcoinjs-lib/src/types';
 
@@ -35,7 +36,7 @@ export const createBtcRedeemTx = ({
   redeemerAddress: string;
   secret: string;
   secretHash: string;
-}): Promise<Result<string, string>> => {
+}): Promise<Result<SignRedeemTxProps, string>> => {
   const internalPubkeyResult = generateInternalPubkey();
   if (!internalPubkeyResult.ok) {
     return Promise.resolve(internalPubkeyResult);
@@ -117,7 +118,6 @@ export const createBtcRedeemTx = ({
         count: utxos.length,
         network,
       });
-      const signer = btcWallet;
       const tempTx = buildTx({
         fee: 0,
         network,
@@ -135,37 +135,26 @@ export const createBtcRedeemTx = ({
         leafScript,
         outputScripts,
         secret: trimmedSecret,
-        signer,
         tx: tempTx,
         values,
       };
-      return signRedeemTx(signTxProps).then((tx) => {
-        return {
-          ok: true,
-          val: {
-            ...signTxProps,
-            tx: buildTx({
-              fee: getFee({ feeRates, vSize: tx.virtualSize() }),
-              network,
-              receiver,
-              utxos,
-              tx: new bitcoin.Transaction(),
-            }),
-          },
-        };
-      });
-    })
-    .then((result) => {
-      if (!result.ok) {
-        return result;
-      }
-      const { val: signTxProps } = result;
-      return signRedeemTx(signTxProps).then((tx) => {
-        return {
-          ok: true,
-          val: tx.toHex(),
-        };
-      });
+      return signBtcRedeemTx({ ...signTxProps, signer: btcWallet }).then(
+        (tx) => {
+          return {
+            ok: true,
+            val: {
+              ...signTxProps,
+              tx: buildTx({
+                fee: getFee({ feeRates, vSize: tx.virtualSize() }),
+                network,
+                receiver,
+                utxos,
+                tx: new bitcoin.Transaction(),
+              }),
+            },
+          };
+        },
+      );
     });
 };
 
@@ -176,11 +165,10 @@ export type SignRedeemTxProps = {
   leafScript: Buffer;
   outputScripts: Array<Buffer>;
   secret: string;
-  signer: BitcoinWallet;
   tx: bitcoin.Transaction;
   values: Array<number>;
 };
-export const signRedeemTx = ({
+export const signBtcRedeemTx = ({
   controlBlock,
   hashType,
   leafHash,
@@ -190,7 +178,9 @@ export const signRedeemTx = ({
   signer,
   tx,
   values,
-}: SignRedeemTxProps): Promise<bitcoin.Transaction> => {
+}: SignRedeemTxProps & {
+  signer: Signer;
+}): Promise<bitcoin.Transaction> => {
   const secretBuffer = Buffer.from(secret, 'hex');
   return Promise.all(
     tx.ins.map((_, i) => {

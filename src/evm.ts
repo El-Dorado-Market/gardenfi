@@ -66,7 +66,7 @@ export const createEvmRedeemTx = ({
     from: evmWalletClient.account.address,
     data,
     to: with0x(contractAddress),
-    value: with0x('0'),
+    value: BigInt(0),
   };
 };
 
@@ -92,15 +92,15 @@ export const createEvmRefundTx = ({
     data,
     from: evmWalletClient.account.address,
     to: with0x(contractAddress),
-    value: with0x('0'),
+    value: BigInt(0),
   };
 };
 
 export type EvmTransaction = {
-  from: string;
-  data: string;
-  to: string;
-  value: string;
+  from: Hex;
+  data: Hex;
+  to: Hex;
+  value: bigint;
 };
 
 export const getOrderId = ({

@@ -280,6 +280,13 @@ export const isValidBitcoinPubKey = ({
 
 export const LEAF_VERSION = 0xc0;
 
+export const prefixScriptLength = (script: Buffer): Buffer => {
+  const varintLen = varuint.encodingLength(script.length);
+  const lengthBuffer = Buffer.allocUnsafe(varintLen);
+  varuint.encode(script.length, lengthBuffer);
+  return Buffer.concat([lengthBuffer, script]);
+};
+
 export const redeemLeaf = ({
   redeemerPubkey,
   secretHash,
@@ -310,9 +317,6 @@ export const refundLeaf = ({
   );
 };
 
-export const prefixScriptLength = (script: Buffer): Buffer => {
-  const varintLen = varuint.encodingLength(script.length);
-  const lengthBuffer = Buffer.allocUnsafe(varintLen);
-  varuint.encode(script.length, lengthBuffer);
-  return Buffer.concat([lengthBuffer, script]);
+export type Signer = {
+  signSchnorr: (hash: Buffer) => Promise<Buffer>;
 };
