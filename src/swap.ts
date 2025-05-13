@@ -88,7 +88,7 @@ export const swap = (
         destination_amount: receiveAmount,
         destination_asset: toAsset.atomicSwapAddress,
         destination_chain: toAsset.chain,
-        fee: '1',
+        fee: '1', // * placeholder
         initiator_destination_address: receiveAddress,
         initiator_source_address: sendAddress,
         min_destination_confirmations: minDestinationConfirmations ?? 0,
@@ -100,7 +100,7 @@ export const swap = (
         timelock,
       };
       return new Quote(api.quote)
-        .getAttestedQuote(orderRequest)
+        .getAttestedQuote(orderRequest) // off chain agreement with a deadline for a quote with slashing for solvers
         .then((attestedQuoteResult) => {
           if (attestedQuoteResult.error) {
             return Err(attestedQuoteResult.error);

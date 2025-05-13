@@ -6,20 +6,9 @@ import {
   Err,
   type Result,
 } from '@gardenfi/utils';
-import {
-  Chains,
-  getTimeLock,
-  isBitcoin,
-  type Asset,
-  type Chain,
-} from '@gardenfi/orderbook';
+import { isBitcoin, type Asset, type Chain } from '@gardenfi/orderbook';
 import { api, digestKey, fromAsset, toAsset } from './utils';
-import {
-  createEvmInitiateTx,
-  createEvmRedeemTx,
-  createEvmRefundTx,
-  evmWalletClient,
-} from './evm';
+import { createEvmInitiateTx, createEvmRedeemTx, evmWalletClient } from './evm';
 import { swap } from './swap';
 import { pollOrder, type OrderWithAction } from './orderbook';
 import { btcProvider, btcWallet } from './btc';
@@ -135,6 +124,7 @@ export const fetchQuote = (props: {
       const {
         val: { orderId, secret },
       } = result;
+      console.log({ secret });
       return pollOrder({
         filter: ({ action, ...order }) => {
           return (
@@ -297,7 +287,7 @@ export const fetchQuote = (props: {
       if (orderWithAction.action === OrderActions.Refund) {
         if (isBitcoin(orderWithAction.source_swap.chain)) {
           return createBtcRefundTx({
-            expiry: getTimeLock(Chains.bitcoin),
+            expiry: orderWithAction.source_swap.timelock,
             initiatorAddress: orderWithAction.source_swap.initiator,
             receiver: btcRecipientAddress,
             redeemerAddress: orderWithAction.source_swap.redeemer,
@@ -331,17 +321,18 @@ export const fetchQuote = (props: {
               });
             });
         }
-        const refundTx = createEvmRefundTx({
-          contractAddress: orderWithAction.source_swap.asset,
-          orderId: orderWithAction.create_order.create_id,
-        });
-        return evmWalletClient.sendTransaction(refundTx).then((outboundTx) => {
-          return { ok: true, val: outboundTx };
-        });
+        // const refundTx = createEvmRefundTx({
+        //   contractAddress: orderWithAction.source_swap.asset,
+        //   orderId: orderWithAction.create_order.create_id,
+        // });
+        // return evmWalletClient.sendTransaction(refundTx).then((outboundTx) => {
+        //   return { ok: true, val: outboundTx };
+        // });
+        return { ok: true, val: 'EVM refunds are handled automatically' };
       }
       if (isBitcoin(orderWithAction.destination_swap.chain)) {
         return createBtcRedeemTx({
-          expiry: getTimeLock(Chains.bitcoin),
+          expiry: orderWithAction.destination_swap.timelock,
           initiatorAddress: orderWithAction.destination_swap.initiator,
           receiver: btcRecipientAddress,
           redeemerAddress: orderWithAction.destination_swap.redeemer,
