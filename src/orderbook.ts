@@ -3,9 +3,9 @@ import { api } from './utils';
 import { Orderbook, type Chain, type MatchedOrder } from '@gardenfi/orderbook';
 import {
   BlockNumberFetcher,
-  type OrderActions,
-  parseActionFromStatus,
-  ParseOrderStatus,
+  OrderActions,
+  ParseSwapStatus,
+  SwapStatus,
 } from '@gardenfi/core';
 
 export type BlockNumbers = {
@@ -24,19 +24,31 @@ export const getOrderAction = ({
 }: {
   blockNumbers: BlockNumbers;
   order: MatchedOrder;
-}): OrderActions => {
-  const sourceChain = order.source_swap.chain;
-  const sourceChainBlockNumber = blockNumbers[sourceChain];
-
+}):
+  | null
+  | OrderActions.Initiate
+  | OrderActions.Refund
+  | OrderActions.Redeem => {
   const destinationChain = order.destination_swap.chain;
   const destinationChainBlockNumber = blockNumbers[destinationChain];
-
-  const status = ParseOrderStatus(
-    order,
-    sourceChainBlockNumber,
+  const destinationStatus = ParseSwapStatus(
+    order.destination_swap,
     destinationChainBlockNumber,
   );
-  return parseActionFromStatus(status);
+
+  const sourceChain = order.source_swap.chain;
+  const sourceChainBlockNumber = blockNumbers[sourceChain];
+  const sourceStatus = ParseSwapStatus(
+    order.source_swap,
+    sourceChainBlockNumber,
+  );
+
+  return (
+    (sourceStatus === SwapStatus.Idle && OrderActions.Initiate) ||
+    (sourceStatus === SwapStatus.Expired && OrderActions.Refund) ||
+    (destinationStatus === SwapStatus.Initiated && OrderActions.Redeem) ||
+    null
+  );
 };
 
 export const getOrderWithAction = ({
@@ -68,8 +80,9 @@ export const getMatchedOrder = ({
 
 export const orderbook = new Orderbook(new Url(api.orderbook));
 
-export type OrderWithAction<A extends OrderActions = OrderActions> =
-  MatchedOrder & { action: A };
+export type OrderWithAction<
+  A extends OrderActions | null = OrderActions | null,
+> = MatchedOrder & { action: A };
 
 export const pollOrder = <A extends OrderActions>({
   attempt = 0,
