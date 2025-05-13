@@ -99,3 +99,26 @@ export const getOrderId = ({
     ]),
   );
 };
+
+export const createEvmInitiateTx = (props: {
+  amountSubunit: string;
+  atomicSwapAddress: string;
+  redeemer: string;
+  secretHash: string;
+  timelock: number;
+}): EvmTransaction => {
+  const amount = BigInt(props.amountSubunit);
+  const atomicSwapAddress = with0x(props.atomicSwapAddress);
+  const redeemer = with0x(props.redeemer);
+  const secretHash = with0x(props.secretHash);
+  const timelock = BigInt(props.timelock);
+  const data = encodeFunctionData({
+    abi: AtomicSwapABI,
+    functionName: 'initiate',
+    args: [redeemer, timelock, amount, secretHash],
+  });
+  return {
+    data,
+    to: atomicSwapAddress,
+  };
+};

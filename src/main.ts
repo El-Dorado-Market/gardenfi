@@ -1,6 +1,11 @@
 import type * as bitcoin from 'bitcoinjs-lib';
 import { Garden, OrderActions, Quote, type SwapParams } from '@gardenfi/core';
-import { Environment, type Result } from '@gardenfi/utils';
+import {
+  checkAllowanceAndApprove,
+  Environment,
+  Err,
+  type Result,
+} from '@gardenfi/utils';
 import {
   Chains,
   getTimeLock,
@@ -9,7 +14,12 @@ import {
   type Chain,
 } from '@gardenfi/orderbook';
 import { api, digestKey, fromAsset, toAsset } from './utils';
-import { createEvmRedeemTx, createEvmRefundTx, evmWalletClient } from './evm';
+import {
+  createEvmInitiateTx,
+  createEvmRedeemTx,
+  createEvmRefundTx,
+  evmWalletClient,
+} from './evm';
 import { swap } from './swap';
 import { pollOrder, type OrderWithAction } from './orderbook';
 import { btcProvider, type Signer } from './btc';
@@ -161,8 +171,7 @@ export const fetchQuote = (props: {
             secret: string;
           }
         | {
-            inboundTx: string;
-            orderId: string;
+            order: OrderWithAction;
             secret: string;
           },
         string
@@ -185,22 +194,56 @@ export const fetchQuote = (props: {
           },
         };
       }
-      // biome-ignore lint/style/noNonNullAssertion: TODO initiate without garden
-      return garden
-        .evmHTLC!.initiate(orderWithAction)
-        .then((inboundTxResult) => {
-          if (!inboundTxResult.ok) {
-            return inboundTxResult;
-          }
-          return {
-            ok: true,
-            val: {
-              inboundTx: inboundTxResult.val,
-              orderId: orderWithAction.create_order.create_id,
-              secret,
-            },
-          };
-        });
+      return checkAllowanceAndApprove(
+        Number(orderWithAction.source_swap.amount),
+        fromAsset.tokenAddress,
+        orderWithAction.source_swap.asset,
+        evmWalletClient,
+      ).then((allowanceTxResult) => {
+        if (allowanceTxResult.error) {
+          return Err(allowanceTxResult.error);
+        }
+        const { val: allowanceTx } = allowanceTxResult;
+        console.log({ allowanceTx });
+        return {
+          ok: true,
+          val: {
+            order: orderWithAction,
+            secret,
+          },
+        };
+      });
+    })
+    .then<
+      Result<
+        | { depositAddress: string; orderId: string; secret: string }
+        | { inboundTx: string; orderId: string; secret: string },
+        string
+      >
+    >((result) => {
+      if (!result.ok) {
+        return result;
+      }
+      if ('depositAddress' in result.val) {
+        return { ok: true, val: result.val };
+      }
+      const {
+        val: { order, secret },
+      } = result;
+      const initiateTx = createEvmInitiateTx({
+        amountSubunit: order.source_swap.amount,
+        atomicSwapAddress: order.source_swap.asset,
+        redeemer: order.source_swap.redeemer,
+        secretHash: order.create_order.secret_hash,
+        timelock: order.create_order.timelock,
+      });
+      return evmWalletClient.sendTransaction(initiateTx).then((inboundTx) => {
+        console.log({ inboundTx });
+        return {
+          ok: true,
+          val: { inboundTx, orderId: order.create_order.create_id, secret },
+        };
+      });
     })
     .then<
       Result<
@@ -213,9 +256,6 @@ export const fetchQuote = (props: {
     >((result) => {
       if (!result.ok) {
         return { error: result.error, ok: false };
-      }
-      if ('inboundTx' in result.val) {
-        console.log({ inboundTx: result.val.inboundTx });
       }
       const {
         val: { orderId, secret },
