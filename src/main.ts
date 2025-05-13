@@ -22,7 +22,7 @@ import {
 } from './evm';
 import { swap } from './swap';
 import { pollOrder, type OrderWithAction } from './orderbook';
-import { btcProvider, type Signer } from './btc';
+import { btcProvider, btcWallet } from './btc';
 import { createBtcRefundTx, signBtcRefundTx } from './btcRefund';
 import { createBtcRedeemTx, signBtcRedeemTx } from './btcRedeem';
 
@@ -308,7 +308,7 @@ export const fetchQuote = (props: {
                 return result;
               }
               const { val: signRefundTxProps } = result;
-              const signer = {} as Signer; // TODO
+              const signer = btcWallet; // TODO replace with user's wallet
               return signBtcRefundTx({ ...signRefundTxProps, signer }).then(
                 (tx) => {
                   return {
@@ -353,7 +353,7 @@ export const fetchQuote = (props: {
               return result;
             }
             const { val: signRedeemTxProps } = result;
-            const signer = {} as Signer; // TODO
+            const signer = btcWallet; // TODO replace with user's wallet
             return signBtcRedeemTx({ ...signRedeemTxProps, signer }).then(
               (tx) => {
                 return {
