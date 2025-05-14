@@ -323,7 +323,7 @@ export const fetchQuote = (props: {
         }
         // const refundTx = createEvmRefundTx({
         //   contractAddress: orderWithAction.source_swap.asset,
-        //   orderId: orderWithAction.create_order.create_id,
+        //   swapId: orderWithAction.source_swap.swap_id,
         // });
         // return evmWalletClient.sendTransaction(refundTx).then((outboundTx) => {
         //   return { ok: true, val: outboundTx };
@@ -371,7 +371,7 @@ export const fetchQuote = (props: {
       }
       const redeemTx = createEvmRedeemTx({
         contractAddress: orderWithAction.destination_swap.asset,
-        orderId: orderWithAction.create_order.create_id,
+        swapId: orderWithAction.destination_swap.swap_id,
         secret,
       });
       return evmWalletClient.sendTransaction(redeemTx).then((outboundTx) => {

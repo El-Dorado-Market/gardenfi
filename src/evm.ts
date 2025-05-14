@@ -47,17 +47,17 @@ export const evmWalletClient = createWalletClient({
 
 export const createEvmRedeemTx = ({
   contractAddress,
-  orderId,
+  swapId,
   secret,
 }: {
   contractAddress: string;
-  orderId: string;
+  swapId: string;
   secret: string;
 }): EvmTransaction => {
   const data = encodeFunctionData({
     abi: AtomicSwapABI,
     functionName: 'redeem',
-    args: [with0x(orderId), with0x(secret)],
+    args: [with0x(swapId), with0x(secret)],
   });
   return {
     data,
@@ -70,15 +70,15 @@ export const createEvmRedeemTx = ({
  */
 export const createEvmRefundTx = ({
   contractAddress,
-  orderId,
+  swapId,
 }: {
   contractAddress: string;
-  orderId: string;
+  swapId: string;
 }): EvmTransaction => {
   const data = encodeFunctionData({
     abi: AtomicSwapABI,
     functionName: 'refund',
-    args: [with0x(orderId)],
+    args: [with0x(swapId)],
   });
   return {
     data,

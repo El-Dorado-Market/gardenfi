@@ -15,9 +15,9 @@ if (!toAsset) {
   throw new Error('Invalid TO_ASSET_KEY: ' + toAssetKey);
 }
 const contractAddress = toAsset.atomicSwapAddress;
-const orderId = process.env.ORDER_ID;
-if (!orderId) {
-  throw new Error('ORDER_ID is not defined');
+const swapId = process.env.SWAP_ID;
+if (!swapId) {
+  throw new Error('SWAP_ID is not defined');
 }
 const secret = process.env.SECRET;
 if (!secret) {
@@ -26,9 +26,14 @@ if (!secret) {
 
 const redeemTx = createEvmRedeemTx({
   contractAddress,
-  orderId,
+  swapId: swapId,
   secret,
 });
-evmWalletClient.sendTransaction(redeemTx).then((outboundTx) => {
-  return { ok: true, val: outboundTx };
-});
+evmWalletClient
+  .sendTransaction(redeemTx)
+  .then((outboundTx) => {
+    return { ok: true, val: outboundTx };
+  })
+  .then((result) => {
+    console.dir(result, { depth: null });
+  });
