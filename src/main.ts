@@ -251,7 +251,7 @@ export const fetchQuote = (props: {
         val: { orderId, secret },
       } = result;
       return pollOrder({
-        attemptsThreshold: 360,
+        attemptsThreshold: 720,
         filter: ({ action, ...order }) => {
           return (
             ((action === OrderActions.Redeem ||
