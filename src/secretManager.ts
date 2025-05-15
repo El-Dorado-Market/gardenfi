@@ -27,7 +27,7 @@ export const signMessage = ({
 }: { digestKey: string; nonce: string }): Result<string, string> => {
   const ECPair = ECPairFactory(ecc);
 
-  const signMessage = 'Garden.fi' + nonce.toString();
+  const signMessage = 'doritokit.dev' + nonce.toString();
   const signMessageBuffer = Buffer.from(signMessage, 'utf8');
   const hash = sha256(signMessageBuffer);
 
@@ -40,5 +40,5 @@ export const signMessage = ({
   }
   const keyPair = ECPair.fromPrivateKey(digestKeyBuf);
   const signature = keyPair.sign(Buffer.from(trim0x(hash), 'hex'));
-  return { ok: true, val: signature.toString('hex') };
+  return { ok: true, val: Buffer.from(signature).toString('hex') };
 };

@@ -16,7 +16,7 @@
     "@gardenfi/orderbook": "2.1.2-beta.15",
     "@gardenfi/utils": "2.1.2-beta.12",
     "bitcoinjs-lib": "^6.1.7",
-    "ecpair": "^2.1.0",
+    "ecpair": "^3.0.0",
     "tiny-secp256k1": "^2.2.3",
     "viem": "^2.28.0"
   },
