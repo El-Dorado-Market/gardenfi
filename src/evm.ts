@@ -66,7 +66,7 @@ export const createEvmRedeemTx = ({
 };
 
 /**
- * EVM refund is automatically done by relay service
+ * @deprecated EVM refund is automatically done by relay service
  */
 export const createEvmRefundTx = ({
   contractAddress,

@@ -321,13 +321,6 @@ export const fetchQuote = (props: {
               });
             });
         }
-        // const refundTx = createEvmRefundTx({
-        //   contractAddress: orderWithAction.source_swap.asset,
-        //   swapId: orderWithAction.source_swap.swap_id,
-        // });
-        // return evmWalletClient.sendTransaction(refundTx).then((outboundTx) => {
-        //   return { ok: true, val: outboundTx };
-        // });
         return { ok: true, val: 'EVM refunds are handled automatically' };
       }
       if (isBitcoin(orderWithAction.destination_swap.chain)) {
