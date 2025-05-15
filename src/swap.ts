@@ -44,10 +44,10 @@ export const swap = (
       minDestinationConfirmations,
       receiveAmount,
       sendAmount,
-      timelock,
       toAsset,
     },
   } = validatedProps;
+  const timelock = getTimeLock(fromAsset.chain);
   return getBtcAddress()
     .then<
       Result<
@@ -150,7 +150,7 @@ export const swap = (
 
 export const validateProps = (
   props: SwapProps,
-): Result<Omit<SwapProps, 'timelock'> & { timelock: number }, string> => {
+): Result<Omit<SwapProps, 'timelock'>, string> => {
   if (!props.additionalData.strategyId) {
     return { error: 'StrategyId is required', ok: false };
   }
@@ -193,11 +193,6 @@ export const validateProps = (
     };
   }
 
-  const timelock = getTimeLock(props.fromAsset.chain);
-  if (!timelock) {
-    return { error: 'Unsupported chain for timelock', ok: false };
-  }
-
   if (
     (isBitcoin(props.fromAsset.chain) || isBitcoin(props.toAsset.chain)) &&
     !props.additionalData.btcAddress
@@ -209,7 +204,7 @@ export const validateProps = (
     };
   }
 
-  return { ok: true, val: { ...props, timelock: props.timelock ?? timelock } };
+  return { ok: true, val: props };
 };
 
 export const validateAmount = (amount: string): Result<BigNumber, string> => {
