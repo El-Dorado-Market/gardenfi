@@ -3,7 +3,6 @@ import * as bitcoin from 'bitcoinjs-lib';
 import {
   btcNetwork,
   btcProvider,
-  btcWallet,
   buildTx,
   generateAddress,
   generateControlBlockFor,
@@ -15,7 +14,7 @@ import {
   htlcErrors,
   redeemLeaf,
   type FeeRates,
-  type Signer,
+  type SignSchnorr,
 } from './btc';
 import { toXOnly } from '@gardenfi/core';
 import type { BitcoinUTXO } from '@catalogfi/wallets';
@@ -27,6 +26,7 @@ export const createBtcRedeemTx = ({
   initiatorAddress,
   receiver,
   redeemerAddress,
+  sign,
   secret,
   secretHash,
 }: {
@@ -34,6 +34,7 @@ export const createBtcRedeemTx = ({
   initiatorAddress: string;
   receiver: string;
   redeemerAddress: string;
+  sign: SignSchnorr;
   secret: string;
   secretHash: string;
 }): Promise<Result<SignRedeemTxProps, string>> => {
@@ -131,26 +132,25 @@ export const createBtcRedeemTx = ({
         leafScript,
         outputScripts,
         secret: trimmedSecret,
+        sign,
         tx: tempTx,
         values,
       };
-      return signBtcRedeemTx({ ...signTxProps, signer: btcWallet }).then(
-        (tx) => {
-          return {
-            ok: true,
-            val: {
-              ...signTxProps,
-              tx: buildTx({
-                fee: getFee({ feeRates, vSize: tx.virtualSize() }),
-                network,
-                receiver,
-                utxos,
-                tx: new bitcoin.Transaction(),
-              }),
-            },
-          };
-        },
-      );
+      return signBtcRedeemTx(signTxProps).then((tx) => {
+        return {
+          ok: true,
+          val: {
+            ...signTxProps,
+            tx: buildTx({
+              fee: getFee({ feeRates, vSize: tx.virtualSize() }),
+              network,
+              receiver,
+              utxos,
+              tx: new bitcoin.Transaction(),
+            }),
+          },
+        };
+      });
     });
 };
 
@@ -161,6 +161,7 @@ export type SignRedeemTxProps = {
   leafScript: Buffer;
   outputScripts: Array<Buffer>;
   secret: string;
+  sign: SignSchnorr;
   tx: bitcoin.Transaction;
   values: Array<number>;
 };
@@ -171,12 +172,10 @@ export const signBtcRedeemTx = ({
   leafScript,
   outputScripts,
   secret,
-  signer,
+  sign,
   tx,
   values,
-}: SignRedeemTxProps & {
-  signer: Signer;
-}): Promise<bitcoin.Transaction> => {
+}: SignRedeemTxProps): Promise<bitcoin.Transaction> => {
   const secretBuffer = Buffer.from(secret, 'hex');
   return Promise.all(
     tx.ins.map((_, i) => {
@@ -187,9 +186,8 @@ export const signBtcRedeemTx = ({
         hashType,
         leafHash,
       );
-      return signer.signSchnorr(hash).then((signature) => {
-        tx.setWitness(i, [signature, secretBuffer, leafScript, controlBlock]);
-      });
+      const signature = sign(hash);
+      tx.setWitness(i, [signature, secretBuffer, leafScript, controlBlock]);
     }),
   ).then(() => {
     return tx;

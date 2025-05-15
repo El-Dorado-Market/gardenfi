@@ -2,7 +2,6 @@ import { trim0x } from '@catalogfi/utils';
 import { Quote, type SwapParams } from '@gardenfi/core';
 import {
   type AdditionalDataWithStrategyId,
-  type CreateOrderRequestWithAdditionalData,
   type CreateOrderReqWithStrategyId,
   getTimeLock,
   isBitcoin,
@@ -13,10 +12,10 @@ import { generateSecret } from './secretManager';
 import { api, digestKey } from './utils';
 import { Err, type Result } from '@gardenfi/utils';
 import { auth } from './auth';
-import { getBtcAddress } from './btc';
 import { orderbook } from './orderbook';
 
 export type SwapProps = SwapParams & {
+  btcPublicKey: string;
   btcRecipientAddress: string;
   evmAddress: string;
 };
@@ -38,6 +37,7 @@ export const swap = (
   const {
     val: {
       additionalData: { strategyId },
+      btcPublicKey,
       btcRecipientAddress,
       fromAsset,
       evmAddress,
@@ -48,88 +48,51 @@ export const swap = (
     },
   } = validatedProps;
   const timelock = getTimeLock(fromAsset.chain);
-  return getBtcAddress()
-    .then<
-      Result<
-        {
-          attestedQuote: CreateOrderRequestWithAdditionalData;
-          secret: string;
-        },
-        string
-      >
-    >((btcAddressResult) => {
-      if (!btcAddressResult.ok) {
-        return { error: btcAddressResult.error, ok: false };
+
+  const nonce = Date.now().toString();
+  const secretResult = generateSecret({
+    digestKey: digestKey.digestKey,
+    nonce,
+  });
+  if (!secretResult.ok) {
+    return Promise.resolve({ error: secretResult.error, ok: false });
+  }
+  const {
+    val: { secret, secretHash },
+  } = secretResult;
+  const additionalData: AdditionalDataWithStrategyId['additional_data'] = {
+    strategy_id: strategyId,
+    ...(btcRecipientAddress && {
+      bitcoin_optional_recipient: btcRecipientAddress,
+    }),
+  };
+  const receiveAddress =
+    (isBitcoin(toAsset.chain) && btcPublicKey) || evmAddress;
+  const sendAddress =
+    (isBitcoin(fromAsset.chain) && btcPublicKey) || evmAddress;
+  const orderRequest: CreateOrderReqWithStrategyId = {
+    additional_data: additionalData,
+    destination_amount: receiveAmount,
+    destination_asset: toAsset.atomicSwapAddress,
+    destination_chain: toAsset.chain,
+    fee: '1', // * placeholder
+    initiator_destination_address: receiveAddress,
+    initiator_source_address: sendAddress,
+    min_destination_confirmations: minDestinationConfirmations ?? 0,
+    nonce,
+    secret_hash: trim0x(secretHash),
+    source_amount: sendAmount,
+    source_asset: fromAsset.atomicSwapAddress,
+    source_chain: fromAsset.chain,
+    timelock,
+  };
+  return new Quote(api.quote)
+    .getAttestedQuote(orderRequest) // off chain agreement with a deadline for a quote with slashing for solvers
+    .then((result) => {
+      if (result.error) {
+        return Err(result.error);
       }
-      const { val: btcAddress } = btcAddressResult;
-      const nonce = Date.now().toString();
-      const secretResult = generateSecret({
-        digestKey: digestKey.digestKey,
-        nonce,
-      });
-      if (!secretResult.ok) {
-        return { error: secretResult.error, ok: false };
-      }
-      const {
-        val: { secret, secretHash },
-      } = secretResult;
-      const additionalData: AdditionalDataWithStrategyId['additional_data'] = {
-        strategy_id: strategyId,
-        ...(btcRecipientAddress && {
-          bitcoin_optional_recipient: btcRecipientAddress,
-        }),
-      };
-      const receiveAddress =
-        (isBitcoin(toAsset.chain) && btcAddress) || evmAddress;
-      const sendAddress =
-        (isBitcoin(fromAsset.chain) && btcAddress) || evmAddress;
-      const orderRequest: CreateOrderReqWithStrategyId = {
-        additional_data: additionalData,
-        destination_amount: receiveAmount,
-        destination_asset: toAsset.atomicSwapAddress,
-        destination_chain: toAsset.chain,
-        fee: '1', // * placeholder
-        initiator_destination_address: receiveAddress,
-        initiator_source_address: sendAddress,
-        min_destination_confirmations: minDestinationConfirmations ?? 0,
-        nonce,
-        secret_hash: trim0x(secretHash),
-        source_amount: sendAmount,
-        source_asset: fromAsset.atomicSwapAddress,
-        source_chain: fromAsset.chain,
-        timelock,
-      };
-      return new Quote(api.quote)
-        .getAttestedQuote(orderRequest) // off chain agreement with a deadline for a quote with slashing for solvers
-        .then((attestedQuoteResult) => {
-          if (attestedQuoteResult.error) {
-            return Err(attestedQuoteResult.error);
-          }
-          const { val: attestedQuote } = attestedQuoteResult;
-          return {
-            ok: true,
-            val: {
-              attestedQuote,
-              secret,
-            },
-          };
-        });
-    })
-    .then<
-      Result<
-        {
-          orderId: string;
-          secret: string;
-        },
-        string
-      >
-    >((result) => {
-      if (!result.ok) {
-        return { error: result.error, ok: false };
-      }
-      const {
-        val: { attestedQuote, secret },
-      } = result;
+      const { val: attestedQuote } = result;
       return orderbook
         .createOrder(attestedQuote, auth)
         .then((orderIdResult) => {

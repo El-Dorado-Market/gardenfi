@@ -28,6 +28,13 @@ if (!fromAsset) {
 const fromAssetValue = fromAsset;
 export { fromAssetValue as fromAsset };
 
+const mnemonic = process.env.MNEMONIC;
+if (!mnemonic) {
+  throw new Error('MNEMONIC is not set');
+}
+const mnemonicValue = mnemonic;
+export { mnemonicValue as mnemonic };
+
 const toAssetKey = process.env.TO_ASSET_KEY;
 if (!toAssetKey) {
   throw new Error('TO_ASSET_KEY is not set');

@@ -1,5 +1,13 @@
+import * as ecc from 'tiny-secp256k1';
 import type * as bitcoin from 'bitcoinjs-lib';
-import { Garden, OrderActions, Quote, type SwapParams } from '@gardenfi/core';
+import {
+  Garden,
+  OrderActions,
+  Quote,
+  toXOnly,
+  type QuoteResponse,
+  type SwapParams,
+} from '@gardenfi/core';
 import {
   checkAllowanceAndApprove,
   Environment,
@@ -7,11 +15,11 @@ import {
   type Result,
 } from '@gardenfi/utils';
 import { isBitcoin, type Asset, type Chain } from '@gardenfi/orderbook';
-import { api, digestKey, fromAsset, toAsset } from './utils';
+import { api, digestKey, fromAsset, mnemonic, toAsset } from './utils';
 import { createEvmInitiateTx, createEvmRedeemTx, evmWalletClient } from './evm';
 import { swap } from './swap';
 import { pollOrder, type OrderWithAction } from './orderbook';
-import { btcProvider, btcWallet } from './btc';
+import { btcProvider, getHdKey } from './btc';
 import { createBtcRefundTx, signBtcRefundTx } from './btcRefund';
 import { createBtcRedeemTx, signBtcRedeemTx } from './btcRedeem';
 
@@ -73,22 +81,55 @@ export const fetchQuote = (props: {
     },
     { depth: null },
   );
-  return new Quote(api.quote)
-    .getQuote(orderPair, sendAmount, false)
+  return Promise.all([
+    getHdKey({ mnemonic }),
+    new Quote(api.quote).getQuote(orderPair, sendAmount, false),
+  ])
+    .then<
+      Result<
+        { btcPrivateKey: Buffer; btcPublicKey: string; quote: QuoteResponse },
+        string
+      >
+    >(([hdKey, quoteResult]) => {
+      if (!hdKey.privateKey) {
+        return { error: 'Failed to derive private key', ok: false };
+      }
+      if (!hdKey.publicKey) {
+        return { error: 'Failed to derive public key', ok: false };
+      }
+      const publicKey = Buffer.from(hdKey.publicKey).toString('hex');
+      console.log({ publicKey });
+      if (quoteResult.error) {
+        return Err(quoteResult.error);
+      }
+      const { val: quote } = quoteResult;
+      return {
+        ok: true,
+        val: {
+          btcPrivateKey: Buffer.from(hdKey.privateKey),
+          btcPublicKey: toXOnly(publicKey),
+          quote,
+        },
+      };
+    })
     .then<
       Result<
         {
+          btcPrivateKey: Buffer;
           orderId: string;
           secret: string;
         },
         string
       >
     >((result) => {
-      if (result.error) {
-        return { error: result.error, ok: false };
+      if (!result.ok) {
+        return result;
       }
-      console.dir({ quote: result.val }, { depth: null });
-      const firstQuote = Object.entries(result.val.quotes).at(0);
+      const {
+        val: { btcPrivateKey, btcPublicKey, quote },
+      } = result;
+      console.dir({ quote }, { depth: null });
+      const firstQuote = Object.entries(quote.quotes).at(0);
       if (!firstQuote) {
         return { error: 'Missing quote', ok: false };
       }
@@ -105,13 +146,30 @@ export const fetchQuote = (props: {
       };
       return swap({
         ...swapParams,
+        btcPublicKey,
         btcRecipientAddress,
         evmAddress: evmWalletClient.account.address,
+      }).then((swapResult) => {
+        if (!swapResult.ok) {
+          return swapResult;
+        }
+        const {
+          val: { orderId, secret },
+        } = swapResult;
+        return {
+          ok: true,
+          val: {
+            btcPrivateKey,
+            orderId,
+            secret,
+          },
+        };
       });
     })
     .then<
       Result<
         {
+          btcPrivateKey: Buffer;
           orderWithAction: OrderWithAction;
           secret: string;
         },
@@ -122,7 +180,7 @@ export const fetchQuote = (props: {
         return { error: result.error, ok: false };
       }
       const {
-        val: { orderId, secret },
+        val: { btcPrivateKey, orderId, secret },
       } = result;
       console.log({ secret });
       return pollOrder({
@@ -147,6 +205,7 @@ export const fetchQuote = (props: {
         return {
           ok: true,
           val: {
+            btcPrivateKey,
             orderWithAction,
             secret,
           },
@@ -156,6 +215,7 @@ export const fetchQuote = (props: {
     .then<
       Result<
         {
+          btcPrivateKey: Buffer;
           orderWithAction: OrderWithAction;
           secret: string;
         },
@@ -166,13 +226,14 @@ export const fetchQuote = (props: {
         return { error: result.error, ok: false };
       }
       const {
-        val: { orderWithAction, secret },
+        val: { btcPrivateKey, orderWithAction, secret },
       } = result;
       console.dir({ orderWithAction }, { depth: null });
       if (isBitcoin(fromAsset.chain)) {
         return {
           ok: true,
           val: {
+            btcPrivateKey,
             orderWithAction,
             secret,
           },
@@ -192,6 +253,7 @@ export const fetchQuote = (props: {
         return {
           ok: true,
           val: {
+            btcPrivateKey,
             orderWithAction,
             secret,
           },
@@ -200,8 +262,17 @@ export const fetchQuote = (props: {
     })
     .then<
       Result<
-        | { orderId: string; secret: string }
-        | { inboundTx: string; orderId: string; secret: string },
+        | {
+            btcPrivateKey: Buffer;
+            orderId: string;
+            secret: string;
+          }
+        | {
+            btcPrivateKey: Buffer;
+            inboundTx: string;
+            orderId: string;
+            secret: string;
+          },
         string
       >
     >((result) => {
@@ -210,6 +281,7 @@ export const fetchQuote = (props: {
       }
       const {
         val: {
+          btcPrivateKey,
           orderWithAction: {
             create_order: { create_id: orderId },
             source_swap: {
@@ -227,6 +299,7 @@ export const fetchQuote = (props: {
         return {
           ok: true,
           val: {
+            btcPrivateKey,
             orderId,
             secret,
           },
@@ -243,13 +316,19 @@ export const fetchQuote = (props: {
         console.log({ inboundTx });
         return {
           ok: true,
-          val: { inboundTx, orderId, secret },
+          val: {
+            btcPrivateKey,
+            inboundTx,
+            orderId,
+            secret,
+          },
         };
       });
     })
     .then<
       Result<
         {
+          btcPrivateKey: Buffer;
           orderWithAction: OrderWithAction;
           secret: string;
         },
@@ -260,7 +339,7 @@ export const fetchQuote = (props: {
         return { error: result.error, ok: false };
       }
       const {
-        val: { orderId, secret },
+        val: { btcPrivateKey, orderId, secret },
       } = result;
       return pollOrder({
         attemptsThreshold: 720,
@@ -283,6 +362,7 @@ export const fetchQuote = (props: {
         return {
           ok: true,
           val: {
+            btcPrivateKey,
             orderWithAction: orderWithActionResult.val,
             secret,
           },
@@ -294,7 +374,7 @@ export const fetchQuote = (props: {
         return result;
       }
       const {
-        val: { orderWithAction, secret },
+        val: { btcPrivateKey, orderWithAction, secret },
       } = result;
       if (orderWithAction.action === OrderActions.Refund) {
         if (isBitcoin(orderWithAction.source_swap.chain)) {
@@ -304,21 +384,21 @@ export const fetchQuote = (props: {
             receiver: btcRecipientAddress,
             redeemerAddress: orderWithAction.source_swap.redeemer,
             secretHash: orderWithAction.source_swap.secret_hash,
+            sign: (hash) => {
+              return Buffer.from(ecc.signSchnorr(hash, btcPrivateKey));
+            },
           })
             .then<Result<bitcoin.Transaction, string>>((result) => {
               if (!result.ok) {
                 return result;
               }
               const { val: signRefundTxProps } = result;
-              const signer = btcWallet; // TODO replace with user's wallet
-              return signBtcRefundTx({ ...signRefundTxProps, signer }).then(
-                (tx) => {
-                  return {
-                    ok: true,
-                    val: tx,
-                  };
-                },
-              );
+              return signBtcRefundTx(signRefundTxProps).then((tx) => {
+                return {
+                  ok: true,
+                  val: tx,
+                };
+              });
             })
             .then((result) => {
               if (!result.ok) {
@@ -343,21 +423,21 @@ export const fetchQuote = (props: {
           redeemerAddress: orderWithAction.destination_swap.redeemer,
           secret,
           secretHash: orderWithAction.destination_swap.secret_hash,
+          sign: (hash) => {
+            return Buffer.from(ecc.signSchnorr(hash, btcPrivateKey));
+          },
         })
           .then<Result<bitcoin.Transaction, string>>((result) => {
             if (!result.ok) {
               return result;
             }
             const { val: signRedeemTxProps } = result;
-            const signer = btcWallet; // TODO replace with user's wallet
-            return signBtcRedeemTx({ ...signRedeemTxProps, signer }).then(
-              (tx) => {
-                return {
-                  ok: true,
-                  val: tx,
-                };
-              },
-            );
+            return signBtcRedeemTx(signRedeemTxProps).then((tx) => {
+              return {
+                ok: true,
+                val: tx,
+              };
+            });
           })
           .then((result) => {
             if (!result.ok) {

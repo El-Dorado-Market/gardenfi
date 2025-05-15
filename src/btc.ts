@@ -1,3 +1,5 @@
+import { HDKey } from '@scure/bip32';
+import { mnemonicToSeed } from '@scure/bip39';
 import * as varuint from 'varuint-bitcoin';
 import * as ecc from 'tiny-secp256k1';
 import {
@@ -7,13 +9,12 @@ import {
   type BitcoinUTXO,
 } from '@catalogfi/wallets';
 import { digestKey } from './utils';
-import { toXOnly } from '@gardenfi/core';
 import type { Result } from '@gardenfi/utils';
 import * as bitcoin from 'bitcoinjs-lib';
 import type { Taptree } from 'bitcoinjs-lib/src/types';
 
 export const btcProvider = new BitcoinProvider(BitcoinNetwork.Mainnet);
-export const btcWallet = BitcoinWallet.fromPrivateKey(
+export const btcSecretWallet = BitcoinWallet.fromPrivateKey(
   digestKey.digestKey,
   btcProvider,
 );
@@ -54,6 +55,14 @@ export type FeeRates = {
   hourFee: number;
   economyFee: number;
   minimumFee: number;
+};
+
+export const getHdKey = ({
+  mnemonic,
+}: { mnemonic: string }): Promise<HDKey> => {
+  return mnemonicToSeed(mnemonic).then((seed) => {
+    return HDKey.fromMasterSeed(seed).derive("m/44'/0'/0'/0/0");
+  });
 };
 
 export const htlcErrors = {
@@ -183,15 +192,6 @@ export const generateOutputScripts = ({
   return outputs;
 };
 
-export const getBtcAddress = (): Promise<Result<string, string>> => {
-  return btcWallet.getPublicKey().then((pubKey) => {
-    if (!pubKey || !isValidBitcoinPubKey({ pubKey })) {
-      return { error: 'Invalid btc public key', ok: false };
-    }
-    return { ok: true, val: toXOnly(pubKey) };
-  });
-};
-
 export const getFee = ({
   feeRates,
   vSize,
@@ -316,6 +316,4 @@ export const refundLeaf = ({
   );
 };
 
-export type Signer = {
-  signSchnorr: (hash: Buffer) => Promise<Buffer>;
-};
+export type SignSchnorr = (hash: Buffer) => Buffer;

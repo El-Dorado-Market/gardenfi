@@ -1,5 +1,5 @@
 import { evmToViemChainMap } from '@gardenfi/core';
-import { fromAsset, toAsset } from './utils';
+import { fromAsset, mnemonic, toAsset } from './utils';
 import { mnemonicToAccount } from 'viem/accounts';
 import {
   type Address,
@@ -19,11 +19,6 @@ import { AtomicSwapABI } from './AtomicSwapABI';
 const evmRpcUrl = process.env.EVM_RPC_URL;
 if (!evmRpcUrl) {
   throw new Error('EVM_RPC_URL is not set');
-}
-
-const mnemonic = process.env.MNEMONIC;
-if (!mnemonic) {
-  throw new Error('MNEMONIC is not set');
 }
 
 export const account = mnemonicToAccount(mnemonic);

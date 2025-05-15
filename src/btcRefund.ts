@@ -5,7 +5,6 @@ import type { Result } from '@gardenfi/utils';
 import {
   btcNetwork,
   btcProvider,
-  btcWallet,
   buildTx,
   generateAddress,
   generateControlBlockFor,
@@ -17,7 +16,7 @@ import {
   htlcErrors,
   refundLeaf,
   type FeeRates,
-  type Signer,
+  type SignSchnorr,
 } from './btc';
 import type { Taptree } from 'bitcoinjs-lib/src/types';
 
@@ -26,12 +25,14 @@ export const createBtcRefundTx = ({
   initiatorAddress,
   receiver,
   redeemerAddress,
+  sign,
   secretHash,
 }: {
   expiry: number;
   initiatorAddress: string;
   receiver: string;
   redeemerAddress: string;
+  sign: SignSchnorr;
   secretHash: string;
 }): Promise<Result<SignRefundTxProps, string>> => {
   const internalPubkeyResult = generateInternalPubkey();
@@ -129,7 +130,6 @@ export const createBtcRefundTx = ({
         count: utxos.length,
         network,
       });
-      const signer = btcWallet;
       const tempTx = buildTx({
         fee: 0,
         network,
@@ -147,10 +147,11 @@ export const createBtcRefundTx = ({
         leafHash,
         leafScript,
         outputScripts,
+        sign,
         tx: tempTx,
         values,
       };
-      return signBtcRefundTx({ ...signTxProps, signer }).then((tx) => {
+      return signBtcRefundTx(signTxProps).then((tx) => {
         return {
           ok: true,
           val: {
@@ -197,6 +198,7 @@ export type SignRefundTxProps = {
   leafHash: Buffer;
   leafScript: Buffer;
   outputScripts: Array<Buffer>;
+  sign: SignSchnorr;
   tx: bitcoin.Transaction;
   values: Array<number>;
 };
@@ -207,10 +209,10 @@ export const signBtcRefundTx = ({
   leafHash,
   leafScript,
   outputScripts,
-  signer,
+  sign,
   tx,
   values,
-}: SignRefundTxProps & { signer: Signer }): Promise<bitcoin.Transaction> => {
+}: SignRefundTxProps): Promise<bitcoin.Transaction> => {
   return Promise.all(
     tx.ins.map((input, i) => {
       input.sequence = expiry;
@@ -221,9 +223,8 @@ export const signBtcRefundTx = ({
         hashType,
         leafHash,
       );
-      return signer.signSchnorr(hash).then((signature) => {
-        tx.setWitness(i, [signature, leafScript, controlBlock]);
-      });
+      const signature = sign(hash);
+      tx.setWitness(i, [signature, leafScript, controlBlock]);
     }),
   ).then(() => {
     return tx;

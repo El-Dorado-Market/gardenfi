@@ -1,5 +1,6 @@
-import type { Result } from '@gardenfi/utils';
-import { btcProvider, btcWallet } from '../src/btc';
+import * as ecc from 'tiny-secp256k1';
+import { Err, type Result } from '@gardenfi/utils';
+import { btcProvider, getHdKey } from '../src/btc';
 import { createBtcRefundTx, signBtcRefundTx } from '../src/btcRefund';
 import type { Transaction } from 'bitcoinjs-lib';
 
@@ -14,9 +15,13 @@ const initiatorAddress = process.env.INITIATOR_ADDRESS;
 if (!initiatorAddress) {
   throw new Error('INITIATOR_ADDRESS is not set');
 }
-const receiver = process.env.RECEIVER;
+const mnemonic = process.env.MNEMONIC;
+if (!mnemonic) {
+  throw new Error('MNEMONIC is not set');
+}
+const receiver = process.env.BTC_RECIPIENT_ADDRESS;
 if (!receiver) {
-  throw new Error('RECEIVER is not set');
+  throw new Error('BTC_RECIPIENT_ADDRESS is not set');
 }
 const redeemerAddress = process.env.REDEEMER_ADDRESS;
 if (!redeemerAddress) {
@@ -27,19 +32,29 @@ if (!secretHash) {
   throw new Error('SECRET_HASH is not set');
 }
 
-createBtcRefundTx({
-  expiry,
-  initiatorAddress,
-  receiver,
-  redeemerAddress,
-  secretHash,
-})
+getHdKey({ mnemonic })
+  .then((hdKey) => {
+    const { privateKey } = hdKey;
+    if (!privateKey) {
+      return Err('Failed to derive private key');
+    }
+    return createBtcRefundTx({
+      expiry,
+      initiatorAddress,
+      receiver,
+      redeemerAddress,
+      secretHash,
+      sign: (hash) => {
+        return Buffer.from(ecc.signSchnorr(hash, privateKey));
+      },
+    });
+  })
   .then<Result<Transaction, string>>((result) => {
     if (!result.ok) {
       return result;
     }
     const { val: props } = result;
-    return signBtcRefundTx({ ...props, signer: btcWallet }).then((tx) => {
+    return signBtcRefundTx(props).then((tx) => {
       return { ok: true, val: tx };
     });
   })
