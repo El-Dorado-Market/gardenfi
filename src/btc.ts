@@ -1,6 +1,5 @@
 import * as varuint from 'varuint-bitcoin';
 import * as ecc from 'tiny-secp256k1';
-import * as secp256k1 from 'tiny-secp256k1';
 import {
   BitcoinNetwork,
   BitcoinProvider,
@@ -272,7 +271,7 @@ export const isValidBitcoinPubKey = ({
 
   try {
     const pubKeyBuffer = Buffer.from(pubKey, 'hex');
-    return secp256k1.isPoint(pubKeyBuffer);
+    return ecc.isPoint(pubKeyBuffer);
   } catch {
     return false;
   }
