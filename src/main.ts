@@ -155,15 +155,10 @@ export const fetchQuote = (props: {
     })
     .then<
       Result<
-        | {
-            depositAddress: string;
-            orderId: string;
-            secret: string;
-          }
-        | {
-            order: OrderWithAction;
-            secret: string;
-          },
+        {
+          orderWithAction: OrderWithAction;
+          secret: string;
+        },
         string
       >
     >((result) => {
@@ -173,13 +168,12 @@ export const fetchQuote = (props: {
       const {
         val: { orderWithAction, secret },
       } = result;
-      console.dir({ order: orderWithAction }, { depth: null });
+      console.dir({ orderWithAction }, { depth: null });
       if (isBitcoin(fromAsset.chain)) {
         return {
           ok: true,
           val: {
-            depositAddress: orderWithAction.source_swap.swap_id,
-            orderId: orderWithAction.create_order.create_id,
+            orderWithAction,
             secret,
           },
         };
@@ -198,7 +192,7 @@ export const fetchQuote = (props: {
         return {
           ok: true,
           val: {
-            order: orderWithAction,
+            orderWithAction,
             secret,
           },
         };
@@ -206,7 +200,7 @@ export const fetchQuote = (props: {
     })
     .then<
       Result<
-        | { depositAddress: string; orderId: string; secret: string }
+        | { orderId: string; secret: string }
         | { inboundTx: string; orderId: string; secret: string },
         string
       >
@@ -214,24 +208,42 @@ export const fetchQuote = (props: {
       if (!result.ok) {
         return result;
       }
-      if ('depositAddress' in result.val) {
-        return { ok: true, val: result.val };
-      }
       const {
-        val: { order, secret },
+        val: {
+          orderWithAction: {
+            create_order: { create_id: orderId },
+            source_swap: {
+              amount: amountSubunit,
+              asset: atomicSwapAddress,
+              redeemer,
+              secret_hash: secretHash,
+              timelock,
+            },
+          },
+          secret,
+        },
       } = result;
+      if (isBitcoin(fromAsset.chain)) {
+        return {
+          ok: true,
+          val: {
+            orderId,
+            secret,
+          },
+        };
+      }
       const initiateTx = createEvmInitiateTx({
-        amountSubunit: order.source_swap.amount,
-        atomicSwapAddress: order.source_swap.asset,
-        redeemer: order.source_swap.redeemer,
-        secretHash: order.create_order.secret_hash,
-        timelock: order.create_order.timelock,
+        amountSubunit,
+        atomicSwapAddress,
+        redeemer,
+        secretHash,
+        timelock,
       });
       return evmWalletClient.sendTransaction(initiateTx).then((inboundTx) => {
         console.log({ inboundTx });
         return {
           ok: true,
-          val: { inboundTx, orderId: order.create_order.create_id, secret },
+          val: { inboundTx, orderId, secret },
         };
       });
     })
