@@ -75,9 +75,7 @@ export const createBtcRedeemTx = ({
     .then<
       Result<
         {
-          address: string;
           feeRates: FeeRates;
-          scriptTree: Taptree;
           utxos: Array<BitcoinUTXO>;
         },
         string
@@ -86,9 +84,7 @@ export const createBtcRedeemTx = ({
       return {
         ok: true,
         val: {
-          address,
           feeRates,
-          scriptTree,
           utxos,
         },
       };
@@ -98,7 +94,7 @@ export const createBtcRedeemTx = ({
         return result;
       }
       const {
-        val: { address, feeRates, scriptTree, utxos },
+        val: { feeRates, utxos },
       } = result;
       const leafScript = redeemLeaf({ redeemerPubkey, secretHash });
       const controlBlockResult = generateControlBlockFor({

@@ -60,17 +60,10 @@ export const createBtcRefundTx = ({
   const { val: address } = addressResult;
   return provider
     .getUTXOs(address)
-    .then<
-      Result<
-        { address: string; scriptTree: Taptree; utxos: Array<BitcoinUTXO> },
-        string
-      >
-    >((utxos) => {
+    .then<Result<{ utxos: Array<BitcoinUTXO> }, string>>((utxos) => {
       return {
         ok: true,
         val: {
-          address,
-          scriptTree,
           utxos,
         },
       };
@@ -78,10 +71,8 @@ export const createBtcRefundTx = ({
     .then<
       Result<
         {
-          address: string;
           blocksToExpiry: number;
           feeRates: FeeRates;
-          scriptTree: Taptree;
           utxos: Array<BitcoinUTXO>;
         },
         string
@@ -91,7 +82,7 @@ export const createBtcRefundTx = ({
         return result;
       }
       const {
-        val: { address, scriptTree, utxos },
+        val: { utxos },
       } = result;
       return Promise.all([
         getBlocksToExpiry({ expiry, provider, utxos }),
@@ -100,10 +91,8 @@ export const createBtcRefundTx = ({
         return {
           ok: true,
           val: {
-            address,
             blocksToExpiry,
             feeRates,
-            scriptTree,
             utxos,
           },
         };
@@ -114,7 +103,7 @@ export const createBtcRefundTx = ({
         return result;
       }
       const {
-        val: { address, blocksToExpiry, feeRates, scriptTree, utxos },
+        val: { blocksToExpiry, feeRates, utxos },
       } = result;
       if (blocksToExpiry > 0) {
         return {
