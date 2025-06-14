@@ -151,21 +151,20 @@ export const createBtcRefundTx = ({
         tx: tempTx,
         values,
       };
-      return signBtcRefundTx(signTxProps).then((tx) => {
-        return {
-          ok: true,
-          val: {
-            ...signTxProps,
-            tx: buildTx({
-              fee: getFee({ feeRates, vSize: tx.virtualSize() }),
-              network,
-              receiver,
-              utxos,
-              tx: new bitcoin.Transaction(),
-            }),
-          },
-        };
-      });
+      const tx = signBtcRefundTx(signTxProps);
+      return {
+        ok: true,
+        val: {
+          ...signTxProps,
+          tx: buildTx({
+            fee: getFee({ feeRates, vSize: tx.virtualSize() }),
+            network,
+            receiver,
+            utxos,
+            tx: new bitcoin.Transaction(),
+          }),
+        },
+      };
     });
 };
 
@@ -212,21 +211,19 @@ export const signBtcRefundTx = ({
   sign,
   tx,
   values,
-}: SignRefundTxProps): Promise<bitcoin.Transaction> => {
-  return Promise.all(
-    tx.ins.map((input, i) => {
-      input.sequence = expiry;
-      const hash = tx.hashForWitnessV1(
-        i,
-        outputScripts,
-        values,
-        hashType,
-        leafHash,
-      );
-      const signature = sign(hash);
-      tx.setWitness(i, [signature, leafScript, controlBlock]);
-    }),
-  ).then(() => {
-    return tx;
+}: SignRefundTxProps): bitcoin.Transaction => {
+  tx.ins.map((input, i) => {
+    input.sequence = expiry;
+    const hash = tx.hashForWitnessV1(
+      i,
+      outputScripts,
+      values,
+      hashType,
+      leafHash,
+    );
+    const signature = sign(hash);
+    tx.setWitness(i, [signature, leafScript, controlBlock]);
   });
+
+  return tx;
 };

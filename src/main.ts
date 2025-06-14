@@ -393,12 +393,11 @@ export const fetchQuote = (props: {
                 return result;
               }
               const { val: signRefundTxProps } = result;
-              return signBtcRefundTx(signRefundTxProps).then((tx) => {
-                return {
-                  ok: true,
-                  val: tx,
-                };
-              });
+              const tx = signBtcRefundTx(signRefundTxProps);
+              return {
+                ok: true,
+                val: tx,
+              };
             })
             .then((result) => {
               if (!result.ok) {
@@ -432,12 +431,11 @@ export const fetchQuote = (props: {
               return result;
             }
             const { val: signRedeemTxProps } = result;
-            return signBtcRedeemTx(signRedeemTxProps).then((tx) => {
-              return {
-                ok: true,
-                val: tx,
-              };
-            });
+            const tx = signBtcRedeemTx(signRedeemTxProps);
+            return {
+              ok: true,
+              val: tx,
+            };
           })
           .then((result) => {
             if (!result.ok) {

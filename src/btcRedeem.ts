@@ -136,21 +136,20 @@ export const createBtcRedeemTx = ({
         tx: tempTx,
         values,
       };
-      return signBtcRedeemTx(signTxProps).then((tx) => {
-        return {
-          ok: true,
-          val: {
-            ...signTxProps,
-            tx: buildTx({
-              fee: getFee({ feeRates, vSize: tx.virtualSize() }),
-              network,
-              receiver,
-              utxos,
-              tx: new bitcoin.Transaction(),
-            }),
-          },
-        };
-      });
+      const tx = signBtcRedeemTx(signTxProps);
+      return {
+        ok: true,
+        val: {
+          ...signTxProps,
+          tx: buildTx({
+            fee: getFee({ feeRates, vSize: tx.virtualSize() }),
+            network,
+            receiver,
+            utxos,
+            tx: new bitcoin.Transaction(),
+          }),
+        },
+      };
     });
 };
 
@@ -175,21 +174,18 @@ export const signBtcRedeemTx = ({
   sign,
   tx,
   values,
-}: SignRedeemTxProps): Promise<bitcoin.Transaction> => {
+}: SignRedeemTxProps): bitcoin.Transaction => {
   const secretBuffer = Buffer.from(secret, 'hex');
-  return Promise.all(
-    tx.ins.map((_, i) => {
-      const hash = tx.hashForWitnessV1(
-        i,
-        outputScripts,
-        values,
-        hashType,
-        leafHash,
-      );
-      const signature = sign(hash);
-      tx.setWitness(i, [signature, secretBuffer, leafScript, controlBlock]);
-    }),
-  ).then(() => {
-    return tx;
+  tx.ins.forEach((_, i) => {
+    const hash = tx.hashForWitnessV1(
+      i,
+      outputScripts,
+      values,
+      hashType,
+      leafHash,
+    );
+    const signature = sign(hash);
+    tx.setWitness(i, [signature, secretBuffer, leafScript, controlBlock]);
   });
+  return tx;
 };

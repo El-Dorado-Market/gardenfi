@@ -59,9 +59,8 @@ getHdKey({ mnemonic })
       return result;
     }
     const { val: props } = result;
-    return signBtcRedeemTx(props).then((tx) => {
-      return { ok: true, val: tx };
-    });
+    const tx = signBtcRedeemTx(props);
+    return { ok: true, val: tx };
   })
   .then<Result<string, string>>((result) => {
     if (!result.ok) {
